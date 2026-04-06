@@ -1,0 +1,37 @@
+{
+  "name": "motion-mapper",
+  "version": "1.0.0",
+  "description": "Virtual Controller - Rehabilitation exercise tracker that converts movements into keypresses",
+  "main": "main.js",
+  "scripts": {
+    "start": "electron .",
+    "dev": "concurrently \"npx webpack serve --config webpack.config.js\" \"wait-on http://localhost:9000 && electron .\"",
+    "build:renderer": "npx webpack --config webpack.config.js --mode production",
+    "build": "npm run build:renderer && electron-builder"
+  },
+  "devDependencies": {
+    "@babel/core": "^7.26.0",
+    "@babel/preset-env": "^7.26.0",
+    "@babel/preset-react": "^7.26.3",
+    "autoprefixer": "^10.4.20",
+    "babel-loader": "^9.2.1",
+    "concurrently": "^9.1.2",
+    "css-loader": "^7.1.2",
+    "electron": "^33.3.1",
+    "html-webpack-plugin": "^5.6.3",
+    "postcss": "^8.4.49",
+    "postcss-loader": "^8.1.1",
+    "style-loader": "^4.0.0",
+    "tailwindcss": "^3.4.17",
+    "wait-on": "^8.0.3",
+    "webpack": "^5.97.1",
+    "webpack-cli": "^6.0.1",
+    "webpack-dev-server": "^5.2.0"
+  },
+  "dependencies": {
+    "koffi": "^2.15.5",
+    "lucide-react": "^0.468.0",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1"
+  }
+}

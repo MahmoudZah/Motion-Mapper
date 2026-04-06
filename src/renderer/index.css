@@ -1,0 +1,50 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  * {
+    -webkit-app-region: no-drag;
+  }
+
+  ::-webkit-scrollbar {
+    width: 6px;
+  }
+  ::-webkit-scrollbar-track {
+    background: #0d1117;
+  }
+  ::-webkit-scrollbar-thumb {
+    background: #21262d;
+    border-radius: 3px;
+  }
+  ::-webkit-scrollbar-thumb:hover {
+    background: #30363d;
+  }
+
+  body {
+    font-family: 'JetBrains Mono', monospace;
+    user-select: none;
+  }
+}
+
+@layer components {
+  .glow-border {
+    border: 1px solid rgba(0, 255, 0, 0.3);
+    box-shadow: inset 0 0 20px rgba(0, 255, 0, 0.05), 0 0 15px rgba(0, 255, 0, 0.1);
+  }
+  .glow-border-warn {
+    border: 1px solid rgba(255, 140, 0, 0.3);
+    box-shadow: inset 0 0 20px rgba(255, 140, 0, 0.05), 0 0 15px rgba(255, 140, 0, 0.1);
+  }
+
+  .scanline {
+    background: repeating-linear-gradient(
+      0deg,
+      transparent,
+      transparent 2px,
+      rgba(0, 255, 0, 0.015) 2px,
+      rgba(0, 255, 0, 0.015) 4px
+    );
+    pointer-events: none;
+  }
+}
