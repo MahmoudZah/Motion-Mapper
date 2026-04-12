@@ -12,6 +12,7 @@ const api = typeof window !== 'undefined' && window.motionAPI ? window.motionAPI
 export default function App() {
   const [activeTab, setActiveTab] = useState('dashboard');
   const [isTracking, setIsTracking] = useState(false);
+  const [poseFrame, setPoseFrame] = useState(null);
   const [exerciseState, setExerciseState] = useState({
     squats: { key: 'Space', active: false, lastDetection: null },
     jumpingJacks: { key: 'W', active: false, lastDetection: null },
@@ -50,10 +51,15 @@ export default function App() {
       setIsTracking(status);
     });
 
+    const unsubPoseFrame = api.onPoseFrame((frame) => {
+      setPoseFrame(frame);
+    });
+
     return () => {
       unsubDetection();
       unsubKeypress();
       unsubTracking();
+      unsubPoseFrame();
     };
   }, []);
 
@@ -131,6 +137,7 @@ export default function App() {
                 calibration={calibration}
                 onCalibrate={handleCalibrate}
                 onSensitivity={handleSensitivity}
+                poseFrame={poseFrame}
               />
             )}
             {activeTab === 'live' && (
@@ -138,6 +145,7 @@ export default function App() {
                 isTracking={isTracking}
                 detections={detections}
                 exerciseState={exerciseState}
+                poseFrame={poseFrame}
               />
             )}
           </div>

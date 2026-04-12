@@ -6,6 +6,8 @@
   "scripts": {
     "start": "electron .",
     "dev": "concurrently \"npx webpack serve --config webpack.config.js\" \"wait-on http://localhost:9000 && electron .\"",
+    "backend:install": "py -3 -m pip install -r backend/requirements.txt",
+    "backend:check": "py -3 backend/main.py --help",
     "build:renderer": "npx webpack --config webpack.config.js --mode production",
     "build": "npm run build:renderer && electron-builder"
   },

@@ -1,7 +1,6 @@
-import React, { useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import {
   SlidersHorizontal,
-  Camera,
   UserCheck,
   Target,
   CheckCircle2,
@@ -9,58 +8,104 @@ import {
   ChevronLeft,
   RotateCcw,
 } from 'lucide-react';
+import PoseCameraViewport from './PoseCameraViewport';
+
+const CALIBRATION_KEYPOINTS = [5, 6, 11, 12, 13, 14];
 
 const steps = [
   {
     id: 1,
     title: 'Camera Check',
-    description: 'Ensure you are fully visible in the webcam frame. Stand 6–8 feet from the camera.',
-    icon: Camera,
+    description: 'Ensure you are fully visible in the webcam frame. Stand 6 to 8 feet from the camera.',
+    icon: UserCheck,
     instruction: 'Position yourself so your full body is visible from head to toe.',
   },
   {
     id: 2,
     title: 'Body Detection',
-    description: 'The system will detect your body landmarks and confirm visibility.',
+    description: 'The system checks that the main torso and leg joints are visible enough to calibrate.',
     icon: UserCheck,
-    instruction: 'Hold still while we detect your joints. All 33 body landmarks must be visible.',
+    instruction: 'Hold still while the tracker locks your shoulders, hips, and knees.',
   },
   {
     id: 3,
     title: 'Neutral Pose Capture',
-    description: 'Stand in a T-pose to calibrate your baseline limb lengths and joint centers.',
+    description: 'Capture your current neutral stance so thresholds can be normalized to your frame.',
     icon: Target,
-    instruction: 'Stand with arms extended horizontally. Hold the pose for 3 seconds.',
+    instruction: 'Stand naturally and hold still for a moment, then capture the pose.',
   },
 ];
 
-export default function CalibrationWizard({ calibration, onCalibrate, onSensitivity }) {
-  const [currentStep, setCurrentStep] = useState(0);
-  const [stepComplete, setStepComplete] = useState([false, false, false]);
+function StatusChip({ label, done }) {
+  return (
+    <div
+      className={`rounded-full border px-3 py-1 text-[10px] uppercase tracking-wider ${
+        done
+          ? 'border-neon/40 bg-neon/10 text-neon'
+          : 'border-panel-border bg-panel text-gray-500'
+      }`}
+    >
+      {label}
+    </div>
+  );
+}
 
-  const handleStepAction = () => {
-    if (currentStep === 2) {
-      onCalibrate();
+export default function CalibrationWizardPrototype({
+  calibration,
+  onCalibrate,
+  onSensitivity,
+  poseFrame,
+}) {
+  const [currentStep, setCurrentStep] = useState(0);
+  const scores = poseFrame?.scores || [];
+  const cameraLive = Boolean(poseFrame?.width && poseFrame?.height);
+  const bodyDetected = Boolean(poseFrame?.poseDetected);
+  const calibrationJointsVisible = useMemo(
+    () => CALIBRATION_KEYPOINTS.every((index) => (scores[index] || 0) >= 0.35),
+    [scores]
+  );
+
+  const completion = [
+    cameraLive,
+    bodyDetected,
+    Boolean(calibration.calibrated),
+  ];
+
+  useEffect(() => {
+    if (currentStep === 0 && cameraLive) {
+      setCurrentStep(1);
+    } else if (currentStep === 1 && bodyDetected) {
+      setCurrentStep(2);
     }
-    const updated = [...stepComplete];
-    updated[currentStep] = true;
-    setStepComplete(updated);
+  }, [cameraLive, bodyDetected, currentStep]);
+
+  const handleStepAction = async () => {
+    if (currentStep < 2) {
+      setCurrentStep((value) => Math.min(value + 1, 2));
+      return;
+    }
+    await onCalibrate();
   };
 
   const handleNext = () => {
-    if (currentStep < 2) setCurrentStep(currentStep + 1);
+    setCurrentStep((value) => Math.min(value + 1, 2));
   };
 
   const handlePrev = () => {
-    if (currentStep > 0) setCurrentStep(currentStep - 1);
+    setCurrentStep((value) => Math.max(value - 1, 0));
   };
 
   const handleReset = () => {
     setCurrentStep(0);
-    setStepComplete([false, false, false]);
   };
 
-  const allComplete = stepComplete.every(Boolean);
+  const currentStepReady = [
+    cameraLive,
+    bodyDetected,
+    calibrationJointsVisible,
+  ][currentStep];
+
+  const allComplete = completion.every(Boolean);
   const StepIcon = steps[currentStep].icon;
 
   return (
@@ -72,22 +117,21 @@ export default function CalibrationWizard({ calibration, onCalibrate, onSensitiv
         </h2>
       </div>
 
-      {/* Step Indicators */}
       <div className="flex items-center gap-2">
-        {steps.map((step, i) => (
+        {steps.map((step, index) => (
           <React.Fragment key={step.id}>
             <button
-              onClick={() => setCurrentStep(i)}
+              onClick={() => setCurrentStep(index)}
               className={`
                 flex items-center gap-2 px-3 py-2 rounded-lg text-xs transition-all
-                ${i === currentStep
+                ${index === currentStep
                   ? 'bg-neon/10 text-neon border border-neon/30'
-                  : stepComplete[i]
+                  : completion[index]
                     ? 'bg-neon/5 text-neon/60 border border-neon/10'
                     : 'bg-surface text-gray-500 border border-panel-border'}
               `}
             >
-              {stepComplete[i] ? (
+              {completion[index] ? (
                 <CheckCircle2 size={14} className="text-neon" />
               ) : (
                 <span className="w-5 h-5 rounded-full border border-current flex items-center justify-center text-[10px]">
@@ -96,14 +140,13 @@ export default function CalibrationWizard({ calibration, onCalibrate, onSensitiv
               )}
               <span className="hidden sm:inline">{step.title}</span>
             </button>
-            {i < steps.length - 1 && (
-              <div className={`w-8 h-px ${stepComplete[i] ? 'bg-neon/40' : 'bg-panel-border'}`} />
+            {index < steps.length - 1 && (
+              <div className={`w-8 h-px ${completion[index] ? 'bg-neon/40' : 'bg-panel-border'}`} />
             )}
           </React.Fragment>
         ))}
       </div>
 
-      {/* Current Step Content */}
       <div className="bg-surface border border-panel-border rounded-xl p-6">
         <div className="flex items-start gap-4">
           <div className="w-12 h-12 rounded-xl bg-neon/10 flex items-center justify-center shrink-0">
@@ -113,41 +156,55 @@ export default function CalibrationWizard({ calibration, onCalibrate, onSensitiv
             <h3 className="text-white font-semibold mb-1">{steps[currentStep].title}</h3>
             <p className="text-sm text-gray-400 mb-4">{steps[currentStep].description}</p>
 
-            {/* Webcam Placeholder */}
             <div className="relative w-full aspect-video bg-panel rounded-lg border border-panel-border overflow-hidden mb-4">
-              <div className="absolute inset-0 flex items-center justify-center">
-                <div className="text-center">
-                  <Camera size={40} className="text-gray-700 mx-auto mb-2" />
-                  <p className="text-xs text-gray-600">Webcam feed will appear here</p>
-                  <p className="text-[10px] text-gray-700 mt-1">MediaPipe skeleton overlay placeholder</p>
-                </div>
-              </div>
-              <div className="absolute inset-0 scanline" />
-              {/* Corner markers */}
-              <div className="absolute top-2 left-2 w-6 h-6 border-l-2 border-t-2 border-neon/40" />
-              <div className="absolute top-2 right-2 w-6 h-6 border-r-2 border-t-2 border-neon/40" />
-              <div className="absolute bottom-2 left-2 w-6 h-6 border-l-2 border-b-2 border-neon/40" />
-              <div className="absolute bottom-2 right-2 w-6 h-6 border-r-2 border-b-2 border-neon/40" />
+              <PoseCameraViewport
+                poseFrame={poseFrame}
+                emptyTitle="Stand where your full body is visible"
+                emptySubtitle="The frontend owns the camera. Calibration lights up as the required joints appear."
+                badge={(
+                  <div className="absolute bottom-3 left-3 rounded-md bg-black/60 px-2.5 py-1.5 text-[10px] text-gray-200 backdrop-blur-sm">
+                    <div>Inference {poseFrame?.inferenceMs ?? '--'} ms</div>
+                    <div>{poseFrame?.poseDetected ? 'Pose detected' : 'No person yet'}</div>
+                  </div>
+                )}
+                hud={(
+                  <div className="absolute inset-x-3 top-3 z-10 flex flex-wrap gap-2 pointer-events-none">
+                    <StatusChip label="Camera live" done={cameraLive} />
+                    <StatusChip label="Body detected" done={bodyDetected} />
+                    <StatusChip label="Calibration joints visible" done={calibrationJointsVisible} />
+                  </div>
+                )}
+                footer={(
+                  <>
+                    <div className="absolute top-2 left-2 w-6 h-6 border-l-2 border-t-2 border-neon/40" />
+                    <div className="absolute top-2 right-2 w-6 h-6 border-r-2 border-t-2 border-neon/40" />
+                    <div className="absolute bottom-2 left-2 w-6 h-6 border-l-2 border-b-2 border-neon/40" />
+                    <div className="absolute bottom-2 right-2 w-6 h-6 border-r-2 border-b-2 border-neon/40" />
+                  </>
+                )}
+              />
             </div>
 
             <p className="text-xs text-gray-500 italic mb-4">{steps[currentStep].instruction}</p>
+            <div className="flex flex-wrap gap-2 mb-4">
+              <StatusChip label="Camera live" done={cameraLive} />
+              <StatusChip label="Body detected" done={bodyDetected} />
+              <StatusChip label="Calibration joints visible" done={calibrationJointsVisible} />
+              <StatusChip label="Captured" done={calibration.calibrated} />
+            </div>
 
             <div className="flex items-center gap-3">
               <button
                 onClick={handleStepAction}
-                disabled={stepComplete[currentStep]}
+                disabled={!currentStepReady && currentStep < 2}
                 className={`
                   px-5 py-2 rounded-lg text-sm font-semibold transition-all
-                  ${stepComplete[currentStep]
-                    ? 'bg-neon/10 text-neon/50 cursor-not-allowed'
+                  ${!currentStepReady && currentStep < 2
+                    ? 'bg-panel text-gray-500 cursor-not-allowed border border-panel-border'
                     : 'bg-neon/20 text-neon border border-neon/30 hover:bg-neon/30 hover:shadow-neon'}
                 `}
               >
-                {stepComplete[currentStep]
-                  ? '✓ Complete'
-                  : currentStep === 2
-                    ? 'Capture Pose'
-                    : 'Confirm'}
+                {currentStep === 2 ? 'Capture Pose' : 'Continue'}
               </button>
 
               <div className="flex gap-2 ml-auto">
@@ -160,7 +217,7 @@ export default function CalibrationWizard({ calibration, onCalibrate, onSensitiv
                 </button>
                 <button
                   onClick={handleNext}
-                  disabled={currentStep === 2 || !stepComplete[currentStep]}
+                  disabled={currentStep === 2}
                   className="p-2 rounded-lg text-gray-500 hover:text-white hover:bg-white/5 disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
                 >
                   <ChevronRight size={18} />
@@ -171,7 +228,6 @@ export default function CalibrationWizard({ calibration, onCalibrate, onSensitiv
         </div>
       </div>
 
-      {/* Sensitivity Slider */}
       <div className="bg-surface border border-panel-border rounded-xl p-5">
         <div className="flex items-center justify-between mb-4">
           <div>
@@ -187,12 +243,8 @@ export default function CalibrationWizard({ calibration, onCalibrate, onSensitiv
           min="0"
           max="100"
           value={calibration.sensitivity}
-          onChange={(e) => onSensitivity(parseInt(e.target.value))}
-          className="w-full h-2 rounded-full appearance-none cursor-pointer
-                     bg-panel [&::-webkit-slider-thumb]:appearance-none
-                     [&::-webkit-slider-thumb]:w-4 [&::-webkit-slider-thumb]:h-4
-                     [&::-webkit-slider-thumb]:rounded-full [&::-webkit-slider-thumb]:bg-neon
-                     [&::-webkit-slider-thumb]:shadow-neon [&::-webkit-slider-thumb]:cursor-pointer"
+          onChange={(event) => onSensitivity(parseInt(event.target.value, 10))}
+          className="w-full h-2 rounded-full appearance-none cursor-pointer bg-panel [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:w-4 [&::-webkit-slider-thumb]:h-4 [&::-webkit-slider-thumb]:rounded-full [&::-webkit-slider-thumb]:bg-neon [&::-webkit-slider-thumb]:shadow-neon [&::-webkit-slider-thumb]:cursor-pointer"
           style={{
             background: `linear-gradient(to right, #00FF00 0%, #00FF00 ${calibration.sensitivity}%, #21262d ${calibration.sensitivity}%, #21262d 100%)`,
           }}
@@ -203,12 +255,11 @@ export default function CalibrationWizard({ calibration, onCalibrate, onSensitiv
         </div>
       </div>
 
-      {/* Calibration Status */}
       <div className="bg-surface border border-panel-border rounded-xl p-4 flex items-center justify-between">
         <div className="flex items-center gap-3">
           <div className={`w-3 h-3 rounded-full ${calibration.calibrated ? 'bg-neon shadow-neon' : 'bg-gray-600'}`} />
           <span className="text-sm text-gray-300">
-            {calibration.calibrated ? 'Calibrated — Neutral pose recorded' : 'Not calibrated'}
+            {calibration.calibrated ? 'Calibrated - neutral pose recorded' : 'Not calibrated'}
           </span>
         </div>
         {allComplete && (
@@ -217,7 +268,7 @@ export default function CalibrationWizard({ calibration, onCalibrate, onSensitiv
             className="flex items-center gap-1.5 text-xs text-gray-500 hover:text-white transition-colors"
           >
             <RotateCcw size={12} />
-            Recalibrate
+            Revisit steps
           </button>
         )}
       </div>

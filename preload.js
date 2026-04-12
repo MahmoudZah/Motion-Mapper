@@ -26,6 +26,13 @@ contextBridge.exposeInMainWorld('motionAPI', {
     ipcRenderer.on('tracking-status', handler);
     return () => ipcRenderer.removeListener('tracking-status', handler);
   },
+  onPoseFrame: (callback) => {
+    const handler = (_, frame) => callback(frame);
+    ipcRenderer.on('pose-frame', handler);
+    return () => ipcRenderer.removeListener('pose-frame', handler);
+  },
+  processVideoFrame: (frame) => ipcRenderer.invoke('process-video-frame', frame),
+  setPreviewActive: (active) => ipcRenderer.invoke('set-preview-active', active),
 
   windowMinimize: () => ipcRenderer.invoke('window-minimize'),
   windowMaximize: () => ipcRenderer.invoke('window-maximize'),

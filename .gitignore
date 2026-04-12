@@ -2,3 +2,15 @@ node_modules/
 dist/
 .env
 *.log
+*.py[cod]
+__pycache__/
+
+backend/.pycache-check/
+backend/.ultralytics/
+backend/Ultralytics/
+backend/**/__pycache__/
+backend/**/*.py[cod]
+backend/processing_backend/overlay.py
+backend/models/*.pt
+
+src/renderer/components/*Prototype.jsx
