@@ -23,6 +23,10 @@ function simulateKeyPress(keyName) {
   keybd_event(vk, 0, 2, 0);   // KEYEVENTF_KEYUP
 }
 
+function shouldSuppressInjectedInput() {
+  return Boolean(mainWindow && !mainWindow.isDestroyed() && mainWindow.isFocused());
+}
+
 let mainWindow = null;
 let tray = null;
 let isTracking = false;
@@ -113,6 +117,9 @@ function handleExerciseDetection(event) {
   }
 
   if (isTracking && payload.status === 'valid' && state.active) {
+    if (shouldSuppressInjectedInput()) {
+      return;
+    }
     simulateKeyPress(state.key);
     mainWindow?.webContents.send('keypress-injected', {
       exercise: payload.exercise,

@@ -21,10 +21,9 @@ class CameraConfig:
 
 @dataclass(slots=True)
 class ModelConfig:
-    model_asset_path: str = "models/pose_landmarker_full.task"
+    weights: str = "models/yolov8n-pose.pt"
+    image_size: int = 480
     confidence: float = 0.5
-    presence_confidence: float = 0.5
-    tracking_confidence: float = 0.5
 
 
 @dataclass(slots=True)

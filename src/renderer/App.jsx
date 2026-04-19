@@ -9,6 +9,36 @@ import CorrectionToast from './components/CorrectionToast';
 
 const api = typeof window !== 'undefined' && window.motionAPI ? window.motionAPI : null;
 
+function normalizeMappedKey(key) {
+  if (!key) return '';
+
+  const aliases = {
+    ' ': 'Space',
+    ArrowUp: 'Up',
+    ArrowDown: 'Down',
+    ArrowLeft: 'Left',
+    ArrowRight: 'Right',
+    Control: 'Ctrl',
+  };
+
+  if (aliases[key]) {
+    return aliases[key];
+  }
+
+  if (key.length === 1) {
+    return key.toUpperCase();
+  }
+
+  return key;
+}
+
+function isMappedActionKey(key, exerciseState) {
+  const normalizedKey = normalizeMappedKey(key);
+  return Object.values(exerciseState).some((exercise) => (
+    exercise?.active && exercise.key === normalizedKey
+  ));
+}
+
 export default function App() {
   const [activeTab, setActiveTab] = useState('dashboard');
   const [isTracking, setIsTracking] = useState(false);
@@ -62,6 +92,41 @@ export default function App() {
       unsubPoseFrame();
     };
   }, []);
+
+  useEffect(() => {
+    if (!isTracking) return undefined;
+
+    const swallowMappedKey = (event) => {
+      if (!isMappedActionKey(event.key, exerciseState)) {
+        return;
+      }
+
+      event.preventDefault();
+      event.stopPropagation();
+      if (typeof event.stopImmediatePropagation === 'function') {
+        event.stopImmediatePropagation();
+      }
+
+      if (document.activeElement && typeof document.activeElement.blur === 'function') {
+        document.activeElement.blur();
+      }
+    };
+
+    window.addEventListener('keydown', swallowMappedKey, true);
+    window.addEventListener('keyup', swallowMappedKey, true);
+
+    return () => {
+      window.removeEventListener('keydown', swallowMappedKey, true);
+      window.removeEventListener('keyup', swallowMappedKey, true);
+    };
+  }, [exerciseState, isTracking]);
+
+  useEffect(() => {
+    if (!isTracking) return;
+    if (document.activeElement && typeof document.activeElement.blur === 'function') {
+      document.activeElement.blur();
+    }
+  }, [isTracking]);
 
   const handleToggleTracking = useCallback(async () => {
     const next = !isTracking;

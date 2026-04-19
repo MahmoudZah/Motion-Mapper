@@ -12,5 +12,6 @@ backend/**/__pycache__/
 backend/**/*.py[cod]
 backend/processing_backend/overlay.py
 backend/models/*.pt
+backend/models/*.task
 
 src/renderer/components/*Prototype.jsx

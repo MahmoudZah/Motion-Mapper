@@ -15,14 +15,14 @@ import numpy as np
 from .config import BackendConfig
 from .exercise_mapper import ExerciseMapper
 from .geometry import KEYPOINT_INDEX
-from .pose_runtime import MediaPipePoseRuntime, PersonPose
+from .pose_runtime import PersonPose, YoloPoseRuntime
 from .protocol import emit_event, log, now_ms
 
 
 class MotionProcessingService:
     def __init__(self, config: BackendConfig):
         self.config = config
-        self.runtime = MediaPipePoseRuntime(config.model)
+        self.runtime = YoloPoseRuntime(config.model)
         self.mapper = ExerciseMapper(config.detection)
         self._running = True
         self._commands: Queue[dict] = Queue()
@@ -38,9 +38,9 @@ class MotionProcessingService:
         signal.signal(signal.SIGTERM, self.stop)
         self._start_control_reader()
 
-        log("[backend] Initializing MediaPipe pose runtime...")
+        log("[backend] Initializing YOLO pose runtime...")
         self.runtime.initialize()
-        log("[backend] MediaPipe pose runtime ready.")
+        log("[backend] YOLO pose runtime ready.")
 
         emit_event(
             {
@@ -48,11 +48,10 @@ class MotionProcessingService:
                 "mode": "frontend_camera",
                 "camera": asdict(self.config.camera),
                 "model": {
-                    "provider": "mediapipe",
-                    "modelAssetPath": self.config.model.model_asset_path,
+                    "provider": "yolo",
+                    "weights": self.config.model.weights,
+                    "imageSize": self.config.model.image_size,
                     "confidence": self.config.model.confidence,
-                    "presenceConfidence": self.config.model.presence_confidence,
-                    "trackingConfidence": self.config.model.tracking_confidence,
                 },
                 "timestamp": now_ms(),
             }
@@ -172,10 +171,15 @@ class MotionProcessingService:
             )
             return
 
-        result = self.runtime.predict(frame, int(command.get("timestamp", timestamp_ms)))
+        result = self.runtime.predict(frame)
         primary = result.primary_person
         self._latest_pose = primary
         self._latest_frame_shape = frame.shape[:2]
+        squat_events = self.mapper.evaluate(
+            pose=primary,
+            inference_ms=result.inference_ms,
+            timestamp_ms=timestamp_ms,
+        )
         guidance = self.mapper.summarize_pose(primary)
 
         emit_event(
@@ -195,11 +199,7 @@ class MotionProcessingService:
             }
         )
 
-        for event in self.mapper.evaluate(
-            pose=primary,
-            inference_ms=result.inference_ms,
-            timestamp_ms=timestamp_ms,
-        ):
+        for event in squat_events:
             emit_event(event)
 
     def _decode_frame_payload(self, image_payload: str | None):
@@ -264,10 +264,9 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--camera-index", type=int, default=0)
     parser.add_argument("--width", type=int, default=640)
     parser.add_argument("--height", type=int, default=480)
-    parser.add_argument("--model-asset", default="models/pose_landmarker_full.task")
+    parser.add_argument("--weights", default="models/yolov8n-pose.pt")
     parser.add_argument("--confidence", type=float, default=0.5)
-    parser.add_argument("--presence-confidence", type=float, default=0.5)
-    parser.add_argument("--tracking-confidence", type=float, default=0.5)
+    parser.add_argument("--imgsz", type=int, default=480)
     parser.add_argument("--sensitivity", type=int, default=70)
     parser.add_argument("--emit-pose", action="store_true")
     parser.add_argument("--show", action="store_true")
@@ -279,10 +278,9 @@ def build_config(args: argparse.Namespace) -> BackendConfig:
     config.camera.index = args.camera_index
     config.camera.width = args.width
     config.camera.height = args.height
-    config.model.model_asset_path = args.model_asset
+    config.model.weights = args.weights
     config.model.confidence = args.confidence
-    config.model.presence_confidence = args.presence_confidence
-    config.model.tracking_confidence = args.tracking_confidence
+    config.model.image_size = args.imgsz
     config.detection.sensitivity = args.sensitivity
     config.stream.emit_pose_events = args.emit_pose
     config.stream.debug_window = args.show
