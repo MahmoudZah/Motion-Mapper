@@ -10,18 +10,18 @@ const exerciseRefs = [
   },
   {
     id: 'jumpingJacks',
-    label: 'Jumping Jacks',
-    tips: ['Full arm extension overhead', 'Feet together on return', 'Smooth rhythm', 'Hands high above head'],
+    label: 'Jump',
+    tips: ['Stand tall before each rep', 'Drive straight up', 'Land and reset cleanly', 'Keep the torso tall'],
   },
   {
     id: 'rightDumbbellRaise',
-    label: 'Right Dumbbell Raise',
-    tips: ['Right elbow near 90 deg', 'Controlled motion', 'Shoulder stays down', 'Return fully to start'],
+    label: 'Right Bicep Curl',
+    tips: ['Keep the elbow close to your side', 'Curl toward the shoulder', 'Lower under control', 'Stand tall through the torso'],
   },
   {
     id: 'leftDumbbellRaise',
-    label: 'Left Dumbbell Raise',
-    tips: ['Mirror the right arm', 'Controlled motion', 'Shoulder stays down', 'Return fully to start'],
+    label: 'Left Bicep Curl',
+    tips: ['Mirror the right arm', 'Keep the elbow close to your side', 'Lower under control', 'Stand tall through the torso'],
   },
 ];
 

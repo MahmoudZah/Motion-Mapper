@@ -5,7 +5,7 @@ Local Python backend for Motion Mapper.
 ## What it does
 
 - Opens the webcam
-- Runs YOLO pose inference in realtime
+- Runs YOLO or MediaPipe pose inference in realtime
 - Maps pose landmarks to exercise events
 - Emits newline-delimited JSON on stdout
 - Accepts simple control commands on stdin
@@ -35,8 +35,10 @@ Optional flags:
 - `--width 640`
 - `--height 480`
 - `--weights models/yolov8n-pose.pt`
+- `--task-model models/pose_landmarker_full.task`
+- `--provider yolo|mediapipe`
 - `--confidence 0.5`
-- `--imgsz 480`
+- `--imgsz 320`
 - `--emit-pose`
 - `--show`
 

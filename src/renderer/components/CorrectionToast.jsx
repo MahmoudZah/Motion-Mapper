@@ -3,9 +3,9 @@ import { AlertTriangle, X } from 'lucide-react';
 
 const exerciseLabels = {
   squats: 'Squats',
-  jumpingJacks: 'Jumping Jacks',
-  rightDumbbellRaise: 'Right Dumbbell',
-  leftDumbbellRaise: 'Left Dumbbell',
+  jumpingJacks: 'Jump',
+  rightDumbbellRaise: 'Right Bicep Curl',
+  leftDumbbellRaise: 'Left Bicep Curl',
 };
 
 export default function CorrectionToast({ correction, onDismiss }) {

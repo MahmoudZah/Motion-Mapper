@@ -59,6 +59,17 @@ SQUAT_CENTER_DRIFT_TOLERANCE = 0.2
 SQUAT_MIN_HIP_WIDTH_RATIO = 0.45
 SQUAT_MIN_ANKLE_WIDTH_RATIO = 0.55
 SQUAT_EXCESSIVE_FORWARD_LEAN = 55.0
+JUMP_PEAK_HIP_RISE = 0.16
+JUMP_PEAK_KNEE_RISE = 0.12
+JUMP_ACTION_HIP_RISE = 0.08
+JUMP_ACTION_KNEE_RISE = 0.05
+JUMP_RESET_HIP_RISE = 0.07
+JUMP_RESET_KNEE_RISE = 0.05
+JUMP_STANDING_KNEE_FLEX_MAX = 20.0
+JUMP_STANDING_TRUNK_MIN = 75.0
+BICEP_CURL_TOP_MAX_ANGLE = 95.0
+BICEP_CURL_RESET_MIN_ANGLE = 145.0
+BICEP_CURL_ELBOW_TUCK_MAX = 0.3
 
 SQUAT_TABLE_MEDIUM = {
     "quarter": {"knee": 45.0, "knee_sd": 0.0, "hip": 55.0, "hip_sd": 6.0, "trunk": 68.0, "trunk_sd": 4.0},
@@ -213,6 +224,9 @@ class ExerciseMapper:
                 metrics=self._squat_event_metrics(metrics),
             )
 
+        if state.bottom_reached and current_stage <= 1:
+            state.bottom_reached = False
+
         if state.armed and standing_candidate and state.standing_frames >= 2:
             state.armed = False
             state.depth_reached = False
@@ -224,102 +238,60 @@ class ExerciseMapper:
 
     def _detect_jumping_jack(self, pose: PersonPose) -> ExerciseSignal | None:
         required = [
-            KEYPOINT_INDEX["nose"],
             KEYPOINT_INDEX["left_shoulder"],
             KEYPOINT_INDEX["right_shoulder"],
-            KEYPOINT_INDEX["left_elbow"],
-            KEYPOINT_INDEX["right_elbow"],
-            KEYPOINT_INDEX["left_wrist"],
-            KEYPOINT_INDEX["right_wrist"],
+            KEYPOINT_INDEX["left_hip"],
+            KEYPOINT_INDEX["right_hip"],
+            KEYPOINT_INDEX["left_knee"],
+            KEYPOINT_INDEX["right_knee"],
             KEYPOINT_INDEX["left_ankle"],
             KEYPOINT_INDEX["right_ankle"],
         ]
         if not self._has_confidence(pose, required):
             return None
 
-        scale = self.config.strictness_scale()
-        shoulders = distance(
-            point(pose.keypoints, KEYPOINT_INDEX["left_shoulder"]),
-            point(pose.keypoints, KEYPOINT_INDEX["right_shoulder"]),
-        )
-        ankles = distance(
-            point(pose.keypoints, KEYPOINT_INDEX["left_ankle"]),
-            point(pose.keypoints, KEYPOINT_INDEX["right_ankle"]),
-        )
-        ankle_span = normalized_distance(
-            point(pose.keypoints, KEYPOINT_INDEX["left_ankle"]),
-            point(pose.keypoints, KEYPOINT_INDEX["right_ankle"]),
-            shoulders,
-        )
-        if ankle_span is None:
-            return None
-
-        nose_y = point(pose.keypoints, KEYPOINT_INDEX["nose"])[1]
-        left_wrist_y = point(pose.keypoints, KEYPOINT_INDEX["left_wrist"])[1]
-        right_wrist_y = point(pose.keypoints, KEYPOINT_INDEX["right_wrist"])[1]
-        wrists_above_head = left_wrist_y < nose_y and right_wrist_y < nose_y
-        arms_extension = mean_or_none(
-            [
-                angle_degrees(
-                    point(pose.keypoints, KEYPOINT_INDEX["left_shoulder"]),
-                    point(pose.keypoints, KEYPOINT_INDEX["left_elbow"]),
-                    point(pose.keypoints, KEYPOINT_INDEX["left_wrist"]),
-                ),
-                angle_degrees(
-                    point(pose.keypoints, KEYPOINT_INDEX["right_shoulder"]),
-                    point(pose.keypoints, KEYPOINT_INDEX["right_elbow"]),
-                    point(pose.keypoints, KEYPOINT_INDEX["right_wrist"]),
-                ),
-            ],
-        )
-        if arms_extension is None:
-            return None
-
-        open_threshold = 1.65 / scale
-        close_threshold = 1.05 / scale
         state = self.state["jumpingJacks"]
+        metrics = self._compute_jump_metrics(pose, state)
+        if metrics is None:
+            return None
 
-        if ankle_span >= open_threshold and wrists_above_head and arms_extension >= 145.0 / scale:
+        hip_rise = float(metrics["hipRise"])
+        knee_rise = float(metrics["kneeRise"])
+        knee_flex = float(metrics["kneeFlex"])
+        trunk_angle = float(metrics["trunkAngle"])
+        standing_candidate = bool(metrics["standingCandidate"])
+        confidence = float(metrics["confidence"])
+
+        if hip_rise >= JUMP_ACTION_HIP_RISE and knee_rise >= JUMP_ACTION_KNEE_RISE:
             if not state.armed:
                 state.armed = True
                 state.rep_count += 1
                 return ExerciseSignal(
                     exercise="jumpingJacks",
                     status="valid",
-                    message="Jumping jack: full extension",
-                    angle=arms_extension,
-                    confidence=self._confidence_for(
-                        pose,
-                        [
-                            KEYPOINT_INDEX["left_wrist"],
-                            KEYPOINT_INDEX["right_wrist"],
-                            KEYPOINT_INDEX["left_ankle"],
-                            KEYPOINT_INDEX["right_ankle"],
-                        ],
-                    ),
-                    phase="open",
+                    message="Jump detected",
+                    angle=hip_rise * 100.0,
+                    confidence=confidence,
+                    phase="takeoff",
                     rep_count=state.rep_count,
-                    metrics={"armAngle": arms_extension, "ankleSpan": ankle_span, "anklesPx": ankles},
+                    metrics=self._jump_event_metrics(metrics),
                 )
             return None
 
-        if ankle_span >= open_threshold and not wrists_above_head:
+        if state.armed and hip_rise <= JUMP_RESET_HIP_RISE and knee_rise <= JUMP_RESET_KNEE_RISE:
+            state.armed = False
+
+        if not standing_candidate and hip_rise <= JUMP_RESET_HIP_RISE and knee_flex > 35.0:
             return ExerciseSignal(
                 exercise="jumpingJacks",
                 status="invalid",
-                message="Extend arms fully overhead",
-                angle=arms_extension,
-                confidence=self._confidence_for(
-                    pose,
-                    [KEYPOINT_INDEX["left_wrist"], KEYPOINT_INDEX["right_wrist"]],
-                ),
-                phase="open",
+                message="Stand tall to reset before the next jump",
+                angle=knee_flex,
+                confidence=confidence,
+                phase="loading",
                 rep_count=state.rep_count,
-                metrics={"armAngle": arms_extension, "ankleSpan": ankle_span},
+                metrics=self._jump_event_metrics(metrics),
             )
-
-        if ankle_span <= close_threshold:
-            state.armed = False
 
         return None
 
@@ -346,72 +318,67 @@ class ExerciseMapper:
             return None
 
         elbow_angle = angle_degrees(shoulder_point, elbow_point, wrist_point)
-        upper_arm_center = midpoint(shoulder_point, elbow_point)
         wrist_height = (shoulder_point[1] - wrist_point[1]) / shoulder_width
         elbow_height = (shoulder_point[1] - elbow_point[1]) / shoulder_width
-        arm_lift = (hip_point[1] - upper_arm_center[1]) / shoulder_width
-
-        raised_wrist_threshold = -0.08 / scale
-        raised_elbow_threshold = -0.12 / scale
-        start_wrist_threshold = -0.28 * scale
-        start_elbow_threshold = -0.18 * scale
-        elbow_min = 70.0 / scale
-        elbow_max = 120.0 * scale
+        curl_top_max = BICEP_CURL_TOP_MAX_ANGLE * scale
+        reset_min = BICEP_CURL_RESET_MIN_ANGLE / scale
+        elbow_tuck_max = BICEP_CURL_ELBOW_TUCK_MAX * scale
+        elbow_tuck = abs(float(elbow_point[0]) - float(shoulder_point[0])) / shoulder_width
 
         exercise_name = "rightDumbbellRaise" if is_right else "leftDumbbellRaise"
         state = self.state[exercise_name]
-        start_pose = wrist_height <= start_wrist_threshold and elbow_height <= start_elbow_threshold
-        raised_pose = wrist_height >= raised_wrist_threshold and elbow_height >= raised_elbow_threshold
-        elbow_on_target = elbow_min <= elbow_angle <= elbow_max
+        reset_pose = elbow_angle >= reset_min and wrist_height <= 0.0
+        curled_pose = wrist_height > 0.0 and elbow_tuck <= elbow_tuck_max
+        elbow_tucked = elbow_tuck <= elbow_tuck_max
 
-        if raised_pose and elbow_on_target:
+        if curled_pose:
             if not state.armed:
                 state.armed = True
                 state.rep_count += 1
-                label = "Right raise" if is_right else "Left raise"
+                label = "Right curl" if is_right else "Left curl"
                 return ExerciseSignal(
                     exercise=exercise_name,
                     status="valid",
                     message=f"{label}: angle {int(round(elbow_angle))} deg",
                     angle=elbow_angle,
                     confidence=self._confidence_for(pose, [shoulder, elbow, wrist]),
-                    phase="raised",
+                    phase="curled",
                     rep_count=state.rep_count,
                     metrics={
-                        "armLift": arm_lift,
+                        "elbowTuck": elbow_tuck,
                         "wristHeight": wrist_height,
                         "elbowHeight": elbow_height,
                     },
                 )
             return None
 
-        if raised_pose and elbow_angle < elbow_min:
+        if elbow_angle <= curl_top_max and not elbow_tucked:
             label = "Right arm" if is_right else "Left arm"
             return ExerciseSignal(
                 exercise=exercise_name,
                 status="invalid",
-                message=f"{label}: open the elbow a bit more",
+                message=f"{label}: keep the elbow tucked by your side",
                 angle=elbow_angle,
                 confidence=self._confidence_for(pose, [shoulder, elbow, wrist]),
-                phase="raised",
+                phase="curled",
                 rep_count=state.rep_count,
-                metrics={"armLift": arm_lift, "wristHeight": wrist_height},
+                metrics={"elbowTuck": elbow_tuck, "wristHeight": wrist_height},
             )
 
-        if raised_pose and elbow_angle > elbow_max:
+        if elbow_tucked and wrist_height <= 0.0:
             label = "Right arm" if is_right else "Left arm"
             return ExerciseSignal(
                 exercise=exercise_name,
                 status="invalid",
-                message=f"{label}: bend the elbow a touch more",
+                message=f"{label}: bring the wrist above the shoulder",
                 angle=elbow_angle,
                 confidence=self._confidence_for(pose, [shoulder, elbow, wrist]),
-                phase="raised",
+                phase="curled",
                 rep_count=state.rep_count,
-                metrics={"armLift": arm_lift, "wristHeight": wrist_height, "elbowHeight": elbow_height},
+                metrics={"elbowTuck": elbow_tuck, "wristHeight": wrist_height, "elbowHeight": elbow_height},
             )
 
-        if start_pose:
+        if reset_pose:
             state.armed = False
 
         return None
@@ -599,6 +566,93 @@ class ExerciseMapper:
             values["kneeDrop"] = float(metrics["kneeDrop"])
         return values
 
+    def _compute_jump_metrics(self, pose: PersonPose, state: ExerciseState) -> dict[str, Any] | None:
+        left_shoulder = point(pose.keypoints, KEYPOINT_INDEX["left_shoulder"])
+        right_shoulder = point(pose.keypoints, KEYPOINT_INDEX["right_shoulder"])
+        left_hip = point(pose.keypoints, KEYPOINT_INDEX["left_hip"])
+        right_hip = point(pose.keypoints, KEYPOINT_INDEX["right_hip"])
+        left_knee = point(pose.keypoints, KEYPOINT_INDEX["left_knee"])
+        right_knee = point(pose.keypoints, KEYPOINT_INDEX["right_knee"])
+        left_ankle = point(pose.keypoints, KEYPOINT_INDEX["left_ankle"])
+        right_ankle = point(pose.keypoints, KEYPOINT_INDEX["right_ankle"])
+
+        shoulder_mid = midpoint(left_shoulder, right_shoulder)
+        hip_mid = midpoint(left_hip, right_hip)
+        knee_mid = midpoint(left_knee, right_knee)
+        shoulder_width = distance(left_shoulder, right_shoulder)
+        torso_len = mean_or_none(
+            [
+                distance(left_shoulder, left_hip),
+                distance(right_shoulder, right_hip),
+            ],
+        )
+        if shoulder_width <= 1e-6 or torso_len is None or torso_len <= 1e-6:
+            return None
+
+        knee_flex = mean_or_none(
+            [
+                max(0.0, 180.0 - angle_degrees(left_hip, left_knee, left_ankle)),
+                max(0.0, 180.0 - angle_degrees(right_hip, right_knee, right_ankle)),
+            ],
+        )
+        if knee_flex is None:
+            return None
+
+        trunk_angle = segment_angle_from_horizontal(hip_mid, shoulder_mid)
+        front_alignment = max(
+            abs(left_shoulder[1] - right_shoulder[1]),
+            abs(left_hip[1] - right_hip[1]),
+            abs(left_knee[1] - right_knee[1]),
+        ) / shoulder_width
+        center_drift = abs(shoulder_mid[0] - hip_mid[0]) / shoulder_width
+        front_facing = (
+            front_alignment <= SQUAT_FRONT_VIEW_TOLERANCE
+            and center_drift <= SQUAT_CENTER_DRIFT_TOLERANCE
+        )
+        standing_candidate = (
+            front_facing
+            and knee_flex <= JUMP_STANDING_KNEE_FLEX_MAX
+            and trunk_angle >= JUMP_STANDING_TRUNK_MIN
+        )
+        if standing_candidate:
+            state.baseline_hip_y = self._ema(state.baseline_hip_y, float(hip_mid[1]))
+            state.baseline_knee_y = self._ema(state.baseline_knee_y, float(knee_mid[1]))
+
+        if state.baseline_hip_y is None or state.baseline_knee_y is None:
+            return None
+
+        hip_rise = (state.baseline_hip_y - float(hip_mid[1])) / torso_len
+        knee_rise = (state.baseline_knee_y - float(knee_mid[1])) / torso_len
+
+        return {
+            "hipRise": max(0.0, hip_rise),
+            "kneeRise": max(0.0, knee_rise),
+            "kneeFlex": knee_flex,
+            "trunkAngle": trunk_angle,
+            "standingCandidate": standing_candidate,
+            "frontFacing": front_facing,
+            "confidence": self._confidence_for(
+                pose,
+                [
+                    KEYPOINT_INDEX["left_shoulder"],
+                    KEYPOINT_INDEX["right_shoulder"],
+                    KEYPOINT_INDEX["left_hip"],
+                    KEYPOINT_INDEX["right_hip"],
+                    KEYPOINT_INDEX["left_knee"],
+                    KEYPOINT_INDEX["right_knee"],
+                ],
+            ),
+        }
+
+    def _jump_event_metrics(self, metrics: dict[str, Any]) -> dict[str, float]:
+        return {
+            "hipRise": float(metrics["hipRise"]),
+            "kneeRise": float(metrics["kneeRise"]),
+            "kneeFlex": float(metrics["kneeFlex"]),
+            "trunkAngle": float(metrics["trunkAngle"]),
+            "frontFacing": 1.0 if metrics["frontFacing"] else 0.0,
+        }
+
     def _ema(self, current: float | None, new_value: float, alpha: float = 0.2) -> float:
         if current is None:
             return new_value
@@ -688,88 +742,68 @@ class ExerciseMapper:
         }
 
     def _summarize_jumping_jack(self, pose: PersonPose | None) -> dict[str, Any]:
-        scale = self.config.strictness_scale()
-        open_threshold = 1.65 / scale
-        close_threshold = 1.05 / scale
-        arm_threshold = 145.0 / scale
         required = [
-            KEYPOINT_INDEX["nose"],
             KEYPOINT_INDEX["left_shoulder"],
             KEYPOINT_INDEX["right_shoulder"],
-            KEYPOINT_INDEX["left_elbow"],
-            KEYPOINT_INDEX["right_elbow"],
-            KEYPOINT_INDEX["left_wrist"],
-            KEYPOINT_INDEX["right_wrist"],
+            KEYPOINT_INDEX["left_hip"],
+            KEYPOINT_INDEX["right_hip"],
+            KEYPOINT_INDEX["left_knee"],
+            KEYPOINT_INDEX["right_knee"],
             KEYPOINT_INDEX["left_ankle"],
             KEYPOINT_INDEX["right_ankle"],
         ]
         if pose is None or not self._has_confidence(pose, required):
             return self._empty_guidance(
-                "Jumping Jacks",
+                "Jump",
                 [
-                    ("closed", "Feet back together", False, None, f"<= {close_threshold:.2f} x shoulder width"),
-                    ("feet", "Feet wide", False, None, f">= {open_threshold:.2f} x shoulder width"),
-                    ("arms", "Arms overhead and straight", False, None, f">= {arm_threshold:.0f} deg"),
+                    ("reset", "Stand tall to reset", False, None, f"knee flex <= {JUMP_STANDING_KNEE_FLEX_MAX:.0f} deg"),
+                    ("drive", "Drive hips upward", False, None, f">= {JUMP_PEAK_HIP_RISE:.2f} torso lengths"),
+                    ("peak", "Reach jump peak", False, None, f">= {JUMP_PEAK_KNEE_RISE:.2f} torso lengths"),
+                ],
+            )
+        metrics = self._compute_jump_metrics(pose, self.state["jumpingJacks"])
+        if metrics is None:
+            return self._empty_guidance(
+                "Jump",
+                [
+                    ("reset", "Stand tall to reset", False, None, f"knee flex <= {JUMP_STANDING_KNEE_FLEX_MAX:.0f} deg"),
+                    ("drive", "Drive hips upward", False, None, f">= {JUMP_PEAK_HIP_RISE:.2f} torso lengths"),
+                    ("peak", "Reach jump peak", False, None, f">= {JUMP_PEAK_KNEE_RISE:.2f} torso lengths"),
                 ],
             )
 
-        shoulders = distance(
-            point(pose.keypoints, KEYPOINT_INDEX["left_shoulder"]),
-            point(pose.keypoints, KEYPOINT_INDEX["right_shoulder"]),
-        )
-        ankle_span = normalized_distance(
-            point(pose.keypoints, KEYPOINT_INDEX["left_ankle"]),
-            point(pose.keypoints, KEYPOINT_INDEX["right_ankle"]),
-            shoulders,
-        )
-        arms_extension = mean_or_none(
-            [
-                angle_degrees(
-                    point(pose.keypoints, KEYPOINT_INDEX["left_shoulder"]),
-                    point(pose.keypoints, KEYPOINT_INDEX["left_elbow"]),
-                    point(pose.keypoints, KEYPOINT_INDEX["left_wrist"]),
-                ),
-                angle_degrees(
-                    point(pose.keypoints, KEYPOINT_INDEX["right_shoulder"]),
-                    point(pose.keypoints, KEYPOINT_INDEX["right_elbow"]),
-                    point(pose.keypoints, KEYPOINT_INDEX["right_wrist"]),
-                ),
-            ],
-        )
-        nose_y = point(pose.keypoints, KEYPOINT_INDEX["nose"])[1]
-        wrists_above_head = (
-            point(pose.keypoints, KEYPOINT_INDEX["left_wrist"])[1] < nose_y
-            and point(pose.keypoints, KEYPOINT_INDEX["right_wrist"])[1] < nose_y
-        )
-        open_pose = (
-            ankle_span is not None
-            and ankle_span >= open_threshold
-            and wrists_above_head
-            and arms_extension is not None
-            and arms_extension >= arm_threshold
-        )
-        closed_pose = ankle_span is not None and ankle_span <= close_threshold
+        hip_rise = float(metrics["hipRise"])
+        knee_rise = float(metrics["kneeRise"])
+        knee_flex = float(metrics["kneeFlex"])
+        standing_candidate = bool(metrics["standingCandidate"])
+        action_pose = hip_rise >= JUMP_ACTION_HIP_RISE and knee_rise >= JUMP_ACTION_KNEE_RISE
+        peak_pose = hip_rise >= JUMP_PEAK_HIP_RISE and knee_rise >= JUMP_PEAK_KNEE_RISE
         phase = "transition"
-        if open_pose:
-            phase = "open"
-        elif closed_pose:
-            phase = "closed"
+        if peak_pose:
+            phase = "peak"
+        elif action_pose:
+            phase = "takeoff"
+        elif standing_candidate:
+            phase = "reset"
+        elif knee_flex > 35.0:
+            phase = "loading"
 
         return {
-            "label": "Jumping Jacks",
+            "label": "Jump",
             "tracked": True,
             "phase": phase,
-            "summary": "Hit the closed stance, then open wide with straight arms overhead.",
+            "summary": "Stand tall to reset, then drive straight up until the hips and knees reach the jump peak.",
             "metrics": {
-                "armAngle": round(arms_extension, 1) if arms_extension is not None else None,
-                "ankleSpan": round(ankle_span, 2) if ankle_span is not None else None,
-                "wristsAboveHead": wrists_above_head,
+                "hipRise": round(hip_rise, 3),
+                "kneeRise": round(knee_rise, 3),
+                "kneeFlex": round(knee_flex, 1),
+                "trunkAngle": round(float(metrics["trunkAngle"]), 1),
             },
             "steps": self._build_steps(
                 [
-                    ("closed", "Feet back together", closed_pose, ankle_span, f"<= {close_threshold:.2f} x shoulder width"),
-                    ("feet", "Feet wide", ankle_span is not None and ankle_span >= open_threshold, ankle_span, f">= {open_threshold:.2f} x shoulder width"),
-                    ("arms", "Arms overhead and straight", wrists_above_head and arms_extension is not None and arms_extension >= arm_threshold, arms_extension, f">= {arm_threshold:.0f} deg"),
+                    ("reset", "Stand tall to reset", standing_candidate, knee_flex, f"knee flex <= {JUMP_STANDING_KNEE_FLEX_MAX:.0f} deg"),
+                    ("drive", "Drive hips upward", hip_rise >= JUMP_ACTION_HIP_RISE, hip_rise, f">= {JUMP_ACTION_HIP_RISE:.2f} torso lengths"),
+                    ("peak", "Reach jump peak", knee_rise >= JUMP_PEAK_KNEE_RISE, knee_rise, f">= {JUMP_PEAK_KNEE_RISE:.2f} torso lengths"),
                 ],
                 formatter=self._format_metric_value,
             ),
@@ -777,25 +811,22 @@ class ExerciseMapper:
 
     def _summarize_raise(self, pose: PersonPose | None, side: str) -> dict[str, Any]:
         scale = self.config.strictness_scale()
-        raised_wrist_threshold = -0.08 / scale
-        raised_elbow_threshold = -0.12 / scale
-        start_wrist_threshold = -0.28 * scale
-        start_elbow_threshold = -0.18 * scale
-        elbow_min = 70.0 / scale
-        elbow_max = 120.0 * scale
+        curl_top_max = BICEP_CURL_TOP_MAX_ANGLE * scale
+        reset_min = BICEP_CURL_RESET_MIN_ANGLE / scale
+        elbow_tuck_max = BICEP_CURL_ELBOW_TUCK_MAX * scale
         shoulder = KEYPOINT_INDEX[f"{side}_shoulder"]
         elbow = KEYPOINT_INDEX[f"{side}_elbow"]
         wrist = KEYPOINT_INDEX[f"{side}_wrist"]
         hip = KEYPOINT_INDEX[f"{side}_hip"]
-        label = "Right Dumbbell Raise" if side == "right" else "Left Dumbbell Raise"
+        label = "Right Bicep Curl" if side == "right" else "Left Bicep Curl"
 
         if pose is None or not self._has_confidence(pose, [shoulder, elbow, wrist, hip]):
             return self._empty_guidance(
                 label,
                 [
-                    ("start", "Return arm to start", False, None, f"wrist <= {start_wrist_threshold:.2f}"),
-                    ("lift", "Lift upper arm", False, None, f"elbow >= {raised_elbow_threshold:.2f}"),
-                    ("elbow", "Hold about 90 deg", False, None, f"{elbow_min:.0f}-{elbow_max:.0f} deg"),
+                    ("reset", "Return to full extension", False, None, f"elbow >= {reset_min:.0f} deg"),
+                    ("tuck", "Keep elbow tucked", False, None, f"elbow tuck <= {elbow_tuck_max:.2f}"),
+                    ("curl", "Bring wrist above shoulder", False, None, "wrist above shoulder"),
                 ],
             )
 
@@ -811,35 +842,36 @@ class ExerciseMapper:
             return self._empty_guidance(label, [])
 
         elbow_angle = angle_degrees(shoulder_point, elbow_point, wrist_point)
-        upper_arm_center = midpoint(shoulder_point, elbow_point)
         wrist_height = (shoulder_point[1] - wrist_point[1]) / shoulder_width
-        arm_lift = (hip_point[1] - upper_arm_center[1]) / shoulder_width
         elbow_height = (shoulder_point[1] - elbow_point[1]) / shoulder_width
-        start_pose = wrist_height <= start_wrist_threshold and elbow_height <= start_elbow_threshold
-        raised_pose = wrist_height >= raised_wrist_threshold and elbow_height >= raised_elbow_threshold
-        elbow_on_target = elbow_min <= elbow_angle <= elbow_max
+        elbow_tuck = abs(float(elbow_point[0]) - float(shoulder_point[0])) / shoulder_width
+        reset_pose = elbow_angle >= reset_min and wrist_height <= 0.0
+        curled_pose = wrist_height > 0.0 and elbow_tuck <= elbow_tuck_max
+        elbow_tucked = elbow_tuck <= elbow_tuck_max
         phase = "transition"
-        if raised_pose and elbow_on_target:
-            phase = "raised"
-        elif start_pose:
-            phase = "start"
+        if curled_pose:
+            phase = "curled"
+        elif reset_pose:
+            phase = "reset"
+        elif elbow_angle < reset_min:
+            phase = "curling"
 
         return {
             "label": label,
             "tracked": True,
             "phase": phase,
-            "summary": "Return to start, then lift the arm and hold the elbow near 90 deg.",
+            "summary": "Start from a long arm, keep the elbow tucked by the torso, then curl the hand toward the shoulder.",
             "metrics": {
                 "elbowAngle": round(elbow_angle, 1),
-                "armLift": round(arm_lift, 2),
+                "elbowTuck": round(elbow_tuck, 2),
                 "wristHeight": round(wrist_height, 2),
                 "elbowHeight": round(elbow_height, 2),
             },
             "steps": self._build_steps(
                 [
-                    ("start", "Return arm to start", start_pose, wrist_height, f"wrist <= {start_wrist_threshold:.2f}"),
-                    ("lift", "Lift upper arm", raised_pose, elbow_height, f"elbow >= {raised_elbow_threshold:.2f}"),
-                    ("elbow", "Hold about 90 deg", elbow_on_target, elbow_angle, f"{elbow_min:.0f}-{elbow_max:.0f} deg"),
+                    ("reset", "Return to full extension", reset_pose, elbow_angle, f"elbow >= {reset_min:.0f} deg"),
+                    ("tuck", "Keep elbow tucked", elbow_tucked, elbow_tuck, f"elbow tuck <= {elbow_tuck_max:.2f}"),
+                    ("curl", "Bring wrist above shoulder", wrist_height > 0.0, wrist_height, "wrist above shoulder"),
                 ],
                 formatter=self._format_metric_value,
             ),

@@ -15,14 +15,14 @@ import numpy as np
 from .config import BackendConfig
 from .exercise_mapper import ExerciseMapper
 from .geometry import KEYPOINT_INDEX
-from .pose_runtime import PersonPose, YoloPoseRuntime
+from .pose_runtime import PersonPose, create_pose_runtime
 from .protocol import emit_event, log, now_ms
 
 
 class MotionProcessingService:
     def __init__(self, config: BackendConfig):
         self.config = config
-        self.runtime = YoloPoseRuntime(config.model)
+        self.runtime = create_pose_runtime(config.model)
         self.mapper = ExerciseMapper(config.detection)
         self._running = True
         self._commands: Queue[dict] = Queue()
@@ -47,12 +47,7 @@ class MotionProcessingService:
                 "type": "backend_ready",
                 "mode": "frontend_camera",
                 "camera": asdict(self.config.camera),
-                "model": {
-                    "provider": "yolo",
-                    "weights": self.config.model.weights,
-                    "imageSize": self.config.model.image_size,
-                    "confidence": self.config.model.confidence,
-                },
+                "model": self.runtime.describe(),
                 "timestamp": now_ms(),
             }
         )
@@ -171,7 +166,7 @@ class MotionProcessingService:
             )
             return
 
-        result = self.runtime.predict(frame)
+        result = self.runtime.predict(frame, timestamp_ms=int(command.get("timestamp", timestamp_ms)))
         primary = result.primary_person
         self._latest_pose = primary
         self._latest_frame_shape = frame.shape[:2]
@@ -264,9 +259,11 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--camera-index", type=int, default=0)
     parser.add_argument("--width", type=int, default=640)
     parser.add_argument("--height", type=int, default=480)
+    parser.add_argument("--provider", choices=["yolo", "mediapipe"], default="yolo")
     parser.add_argument("--weights", default="models/yolov8n-pose.pt")
+    parser.add_argument("--task-model", default="models/pose_landmarker_full.task")
     parser.add_argument("--confidence", type=float, default=0.5)
-    parser.add_argument("--imgsz", type=int, default=480)
+    parser.add_argument("--imgsz", type=int, default=320)
     parser.add_argument("--sensitivity", type=int, default=70)
     parser.add_argument("--emit-pose", action="store_true")
     parser.add_argument("--show", action="store_true")
@@ -278,7 +275,9 @@ def build_config(args: argparse.Namespace) -> BackendConfig:
     config.camera.index = args.camera_index
     config.camera.width = args.width
     config.camera.height = args.height
+    config.model.provider = args.provider
     config.model.weights = args.weights
+    config.model.mediapipe_task_path = args.task_model
     config.model.confidence = args.confidence
     config.model.image_size = args.imgsz
     config.detection.sensitivity = args.sensitivity

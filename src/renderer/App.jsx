@@ -53,6 +53,9 @@ export default function App() {
     calibrated: false,
     sensitivity: 70,
     neutralPose: null,
+    provider: 'yolo',
+    availableProviders: [],
+    model: null,
   });
   const [detections, setDetections] = useState([]);
   const [corrections, setCorrections] = useState([]);
@@ -175,6 +178,12 @@ export default function App() {
     }
   }, []);
 
+  const handleProvider = useCallback(async (provider) => {
+    if (!api?.setProvider) return;
+    const result = await api.setProvider(provider);
+    setCalibration(result);
+  }, []);
+
   const dismissCorrection = useCallback((id) => {
     setCorrections((prev) => prev.filter((c) => c.id !== id));
   }, []);
@@ -202,6 +211,7 @@ export default function App() {
                 calibration={calibration}
                 onCalibrate={handleCalibrate}
                 onSensitivity={handleSensitivity}
+                onProvider={handleProvider}
                 poseFrame={poseFrame}
               />
             )}

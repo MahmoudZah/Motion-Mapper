@@ -9,6 +9,7 @@ contextBridge.exposeInMainWorld('motionAPI', {
 
   calibrate: () => ipcRenderer.invoke('calibrate'),
   setSensitivity: (value) => ipcRenderer.invoke('set-sensitivity', value),
+  setProvider: (provider) => ipcRenderer.invoke('set-provider', provider),
   getCalibration: () => ipcRenderer.invoke('get-calibration'),
 
   onExerciseDetection: (callback) => {

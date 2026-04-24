@@ -54,6 +54,7 @@ export default function CalibrationWizardPrototype({
   calibration,
   onCalibrate,
   onSensitivity,
+  onProvider,
   poseFrame,
 }) {
   const [currentStep, setCurrentStep] = useState(0);
@@ -224,6 +225,55 @@ export default function CalibrationWizardPrototype({
                 </button>
               </div>
             </div>
+          </div>
+        </div>
+      </div>
+
+      <div className="bg-surface border border-panel-border rounded-xl p-5">
+        <div className="flex items-center justify-between gap-4 mb-4">
+          <div>
+            <h3 className="text-sm text-white font-semibold">Pose Runtime</h3>
+            <p className="text-xs text-gray-500 mt-0.5">
+              Switch between YOLO and MediaPipe pose backends
+            </p>
+          </div>
+          <span className="text-xs uppercase tracking-wider text-neon">
+            {calibration.model?.provider || calibration.provider}
+          </span>
+        </div>
+
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+          {(calibration.availableProviders || []).map((provider) => {
+            const active = calibration.provider === provider.id;
+            return (
+              <button
+                key={provider.id}
+                onClick={() => onProvider(provider.id)}
+                className={`rounded-xl border p-4 text-left transition-all ${
+                  active
+                    ? 'border-neon/40 bg-neon/10 shadow-neon'
+                    : 'border-panel-border bg-panel hover:border-neon/20'
+                }`}
+              >
+                <div className="flex items-center justify-between gap-3">
+                  <div>
+                    <p className={`text-sm font-semibold ${active ? 'text-neon' : 'text-white'}`}>
+                      {provider.label}
+                    </p>
+                    <p className="mt-1 text-xs text-gray-500">{provider.description}</p>
+                  </div>
+                  <div className={`w-2.5 h-2.5 rounded-full ${active ? 'bg-neon shadow-neon' : 'bg-gray-600'}`} />
+                </div>
+              </button>
+            );
+          })}
+        </div>
+
+        <div className="mt-4 rounded-xl border border-panel-border bg-panel px-4 py-3 text-xs text-gray-400">
+          <div>Active provider: {calibration.model?.provider || calibration.provider}</div>
+          <div>Model asset: {calibration.model?.asset?.path || calibration.model?.taskPath || calibration.model?.weights || '--'}</div>
+          <div>
+            First-run download: {calibration.model?.asset?.downloaded ? 'completed this session' : 'already available or pending first launch'}
           </div>
         </div>
       </div>

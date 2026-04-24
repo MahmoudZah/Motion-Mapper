@@ -24,6 +24,7 @@ export default function PoseCameraViewport({
 }) {
   const videoRef = useRef(null);
   const captureCanvasRef = useRef(null);
+  const captureContextRef = useRef(null);
   const streamRef = useRef(null);
   const [cameraReady, setCameraReady] = useState(false);
   const [cameraError, setCameraError] = useState('');
@@ -49,8 +50,8 @@ export default function PoseCameraViewport({
           audio: false,
           video: {
             facingMode: 'user',
-            width: { ideal: 960 },
-            height: { ideal: 540 },
+            width: { ideal: 640 },
+            height: { ideal: 360 },
           },
         });
         if (cancelled) {
@@ -97,29 +98,44 @@ export default function PoseCameraViewport({
     let cancelled = false;
     let busy = false;
     let timer = null;
+    const frameDelayMs = 16;
+    const jpegQuality = 0.55;
 
     const sendFrame = async () => {
       if (cancelled) return;
       const video = videoRef.current;
       const canvas = captureCanvasRef.current;
       if (!video || !canvas || video.readyState < 2 || busy) {
-        timer = window.setTimeout(sendFrame, 120);
+        timer = window.setTimeout(sendFrame, frameDelayMs);
         return;
       }
 
       const width = video.videoWidth;
       const height = video.videoHeight;
       if (!width || !height) {
-        timer = window.setTimeout(sendFrame, 120);
+        timer = window.setTimeout(sendFrame, frameDelayMs);
         return;
       }
 
       busy = true;
-      canvas.width = width;
-      canvas.height = height;
-      const context = canvas.getContext('2d', { willReadFrequently: true });
+      if (canvas.width !== width) {
+        canvas.width = width;
+      }
+      if (canvas.height !== height) {
+        canvas.height = height;
+      }
+      let context = captureContextRef.current;
+      if (!context) {
+        context = canvas.getContext('2d', { willReadFrequently: true });
+        captureContextRef.current = context;
+      }
+      if (!context) {
+        busy = false;
+        timer = window.setTimeout(sendFrame, frameDelayMs);
+        return;
+      }
       context.drawImage(video, 0, 0, width, height);
-      const image = canvas.toDataURL('image/jpeg', 0.72);
+      const image = canvas.toDataURL('image/jpeg', jpegQuality);
 
       try {
         await api.processVideoFrame({
@@ -133,7 +149,7 @@ export default function PoseCameraViewport({
       } finally {
         busy = false;
         if (!cancelled) {
-          timer = window.setTimeout(sendFrame, 120);
+          timer = window.setTimeout(sendFrame, frameDelayMs);
         }
       }
     };

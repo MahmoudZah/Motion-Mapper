@@ -2,6 +2,10 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
+DEFAULT_MODEL_PROVIDER = "yolo"
+DEFAULT_YOLO_WEIGHTS = "models/yolov8n-pose.pt"
+DEFAULT_MEDIAPIPE_TASK = "models/pose_landmarker_full.task"
+
 
 DEFAULT_EXERCISE_KEYS = {
     "squats": "Space",
@@ -21,8 +25,15 @@ class CameraConfig:
 
 @dataclass(slots=True)
 class ModelConfig:
-    weights: str = "models/yolov8n-pose.pt"
-    image_size: int = 480
+    provider: str = DEFAULT_MODEL_PROVIDER
+    weights: str = DEFAULT_YOLO_WEIGHTS
+    yolo_weights_url: str = "https://github.com/ultralytics/assets/releases/latest/download/yolov8n-pose.pt"
+    mediapipe_task_path: str = DEFAULT_MEDIAPIPE_TASK
+    mediapipe_task_url: str = (
+        "https://storage.googleapis.com/mediapipe-models/pose_landmarker/"
+        "pose_landmarker_full/float16/latest/pose_landmarker_full.task"
+    )
+    image_size: int = 320
     confidence: float = 0.5
 
 

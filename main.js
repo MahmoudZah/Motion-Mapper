@@ -37,6 +37,7 @@ let backendStartupPromise = null;
 let resolveBackendStartup = null;
 let rejectBackendStartup = null;
 let backendCommandCounter = 0;
+let restartingBackend = false;
 const pendingBackendRequests = new Map();
 
 const BACKEND_START_TIMEOUT_MS = 30000;
@@ -55,6 +56,12 @@ let calibrationData = {
   calibrated: false,
   sensitivity: 70,
   neutralPose: null,
+  provider: 'yolo',
+  availableProviders: [
+    { id: 'yolo', label: 'YOLO Pose', description: 'Fast COCO-style 17-joint pose model.' },
+    { id: 'mediapipe', label: 'MediaPipe Pose', description: 'Google pose landmarker with built-in tracking.' },
+  ],
+  model: null,
 };
 
 function getPythonLaunchSpec() {
@@ -132,6 +139,11 @@ function handleBackendEvent(event) {
   switch (event.type) {
     case 'backend_ready':
       backendReady = true;
+      calibrationData = {
+        ...calibrationData,
+        provider: event.model?.provider || calibrationData.provider,
+        model: event.model || calibrationData.model,
+      };
       settleBackendStartup();
       return;
     case 'exercise_detection':
@@ -218,6 +230,8 @@ function startBackend() {
     BACKEND_ENTRY,
     '--sensitivity',
     String(calibrationData.sensitivity),
+    '--provider',
+    calibrationData.provider,
   ];
 
   backendReady = false;
@@ -282,7 +296,7 @@ function startBackend() {
         settleBackendStartup();
       }
 
-      if (isTracking) {
+      if (isTracking && !restartingBackend) {
         isTracking = false;
         updateExerciseActivity(false);
         mainWindow?.webContents.send('tracking-status', false);
@@ -313,6 +327,38 @@ async function stopBackend() {
 
   if (processRef.exitCode === null && !processRef.killed) {
     processRef.kill();
+  }
+}
+
+async function restartBackendPreservingState() {
+  const shouldResumeTracking = isTracking;
+  const shouldResumePreview = previewActive;
+  const shouldRestart = Boolean(backendProcess) || shouldResumeTracking || shouldResumePreview;
+  if (!shouldRestart) {
+    return;
+  }
+
+  restartingBackend = true;
+  try {
+    await stopBackend();
+    if (shouldResumeTracking || shouldResumePreview) {
+      await startBackend();
+    }
+    if (shouldResumeTracking) {
+      isTracking = true;
+      updateExerciseActivity(true);
+      mainWindow?.webContents.send('tracking-status', true);
+    }
+  } catch (error) {
+    if (shouldResumeTracking) {
+      isTracking = false;
+      updateExerciseActivity(false);
+      mainWindow?.webContents.send('tracking-status', false);
+    }
+    throw error;
+  } finally {
+    restartingBackend = false;
+    createTray();
   }
 }
 
@@ -435,13 +481,13 @@ function createTray() {
 const mockExerciseData = [
   { exercise: 'squats', status: 'valid', message: 'Squat Detected: Valid', angle: 92 },
   { exercise: 'squats', status: 'invalid', message: 'Keep your back straight', angle: 65 },
-  { exercise: 'jumpingJacks', status: 'valid', message: 'Jumping Jack: Full Extension', angle: 175 },
-  { exercise: 'rightDumbbellRaise', status: 'valid', message: 'Right Raise: Angle 90°', angle: 90 },
-  { exercise: 'rightDumbbellRaise', status: 'invalid', message: 'Raise arm higher', angle: 45 },
-  { exercise: 'leftDumbbellRaise', status: 'valid', message: 'Left Raise: Angle 88°', angle: 88 },
-  { exercise: 'leftDumbbellRaise', status: 'invalid', message: 'Lower your shoulder', angle: 52 },
+  { exercise: 'jumpingJacks', status: 'valid', message: 'Jump peak reached', angle: 18 },
+  { exercise: 'rightDumbbellRaise', status: 'valid', message: 'Right curl: angle 82 deg', angle: 82 },
+  { exercise: 'rightDumbbellRaise', status: 'invalid', message: 'Right arm: keep the elbow tucked by your side', angle: 108 },
+  { exercise: 'leftDumbbellRaise', status: 'valid', message: 'Left curl: angle 79 deg', angle: 79 },
+  { exercise: 'leftDumbbellRaise', status: 'invalid', message: 'Left arm: curl higher toward the shoulder', angle: 118 },
   { exercise: 'squats', status: 'valid', message: 'Squat Detected: Valid', angle: 95 },
-  { exercise: 'jumpingJacks', status: 'invalid', message: 'Extend arms fully', angle: 130 },
+  { exercise: 'jumpingJacks', status: 'invalid', message: 'Stand tall to reset before the next jump', angle: 42 },
 ];
 
 // ── IPC Handlers ──
@@ -513,6 +559,27 @@ ipcMain.handle('set-sensitivity', async (_, value) => {
       console.error('[processing-backend] sensitivity update failed:', error);
     }
   }
+  return calibrationData;
+});
+
+ipcMain.handle('set-provider', async (_, provider) => {
+  if (!['yolo', 'mediapipe'].includes(provider)) {
+    return calibrationData;
+  }
+
+  calibrationData = {
+    ...calibrationData,
+    provider,
+    calibrated: false,
+    neutralPose: null,
+  };
+
+  try {
+    await restartBackendPreservingState();
+  } catch (error) {
+    console.error('[processing-backend] provider update failed:', error);
+  }
+
   return calibrationData;
 });
 

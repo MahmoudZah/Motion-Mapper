@@ -4,9 +4,9 @@ import KeySelector from './KeySelector';
 
 const exercises = [
   { id: 'squats', label: 'Squats', defaultKey: 'Space' },
-  { id: 'jumpingJacks', label: 'Jumping Jacks', defaultKey: 'W' },
-  { id: 'rightDumbbellRaise', label: 'Right Dumbbell Raise', defaultKey: 'D' },
-  { id: 'leftDumbbellRaise', label: 'Left Dumbbell Raise', defaultKey: 'A' },
+  { id: 'jumpingJacks', label: 'Jump', defaultKey: 'W' },
+  { id: 'rightDumbbellRaise', label: 'Right Bicep Curl', defaultKey: 'D' },
+  { id: 'leftDumbbellRaise', label: 'Left Bicep Curl', defaultKey: 'A' },
 ];
 
 export default function Dashboard({ exerciseState, isTracking, onUpdateKey, keypresses, detections }) {
