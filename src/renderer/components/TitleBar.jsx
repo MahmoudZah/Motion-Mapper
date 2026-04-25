@@ -1,5 +1,5 @@
 import React from 'react';
-import { Minus, Square, X, Gamepad2 } from 'lucide-react';
+import { Minus, Square, X, Gamepad2, PictureInPicture2 } from 'lucide-react';
 
 const api = typeof window !== 'undefined' && window.motionAPI ? window.motionAPI : null;
 
@@ -17,6 +17,14 @@ export default function TitleBar() {
       </div>
 
       <div className="flex items-center gap-1" style={{ WebkitAppRegion: 'no-drag' }}>
+        <button
+          onClick={() => api?.toggleOverlays()}
+          title="Toggle overlays"
+          className="w-8 h-8 flex items-center justify-center rounded hover:bg-neon/10 transition-colors"
+        >
+          <PictureInPicture2 size={14} className="text-neon/60 hover:text-neon" />
+        </button>
+        <div className="w-px h-4 bg-panel-border mx-0.5" />
         <button
           onClick={() => api?.windowMinimize()}
           className="w-8 h-8 flex items-center justify-center rounded hover:bg-white/10 transition-colors"

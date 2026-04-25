@@ -1,5 +1,5 @@
 import React from 'react';
-import { LayoutDashboard, SlidersHorizontal, Video, Zap } from 'lucide-react';
+import { LayoutDashboard, SlidersHorizontal, Video } from 'lucide-react';
 
 const tabs = [
   { id: 'dashboard', label: 'Dashboard', icon: LayoutDashboard },

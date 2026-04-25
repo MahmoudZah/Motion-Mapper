@@ -5,9 +5,13 @@ import Dashboard from './components/Dashboard';
 import CalibrationWizard from './components/CalibrationWizard';
 import LiveView from './components/LiveView';
 import IgnitionButton from './components/IgnitionButton';
-import CorrectionToast from './components/CorrectionToast';
+import OverlayView from './components/OverlayView';
+import AlertsOverlay from './components/AlertsOverlay';
 
 const api = typeof window !== 'undefined' && window.motionAPI ? window.motionAPI : null;
+const params = typeof window !== 'undefined' ? new URLSearchParams(window.location.search) : null;
+const isOverlay = params?.get('overlay') === '1';
+const isAlertsOverlay = params?.get('alerts') === '1';
 
 function normalizeMappedKey(key) {
   if (!key) return '';
@@ -58,7 +62,6 @@ export default function App() {
     model: null,
   });
   const [detections, setDetections] = useState([]);
-  const [corrections, setCorrections] = useState([]);
   const [keypresses, setKeypresses] = useState([]);
 
   useEffect(() => {
@@ -68,12 +71,6 @@ export default function App() {
 
     const unsubDetection = api.onExerciseDetection((data) => {
       setDetections((prev) => [data, ...prev].slice(0, 50));
-      if (data.status === 'invalid') {
-        setCorrections((prev) => [
-          { id: Date.now(), message: data.message, exercise: data.exercise },
-          ...prev,
-        ].slice(0, 5));
-      }
     });
 
     const unsubKeypress = api.onKeypressInjected((data) => {
@@ -184,9 +181,8 @@ export default function App() {
     setCalibration(result);
   }, []);
 
-  const dismissCorrection = useCallback((id) => {
-    setCorrections((prev) => prev.filter((c) => c.id !== id));
-  }, []);
+  if (isOverlay) return <OverlayView />;
+  if (isAlertsOverlay) return <AlertsOverlay />;
 
   return (
     <div className="h-screen w-screen flex flex-col bg-panel overflow-hidden">
@@ -229,11 +225,6 @@ export default function App() {
         </main>
       </div>
 
-      <div className="fixed top-16 right-6 z-50 flex flex-col gap-2 max-w-sm">
-        {corrections.map((c) => (
-          <CorrectionToast key={c.id} correction={c} onDismiss={() => dismissCorrection(c.id)} />
-        ))}
-      </div>
     </div>
   );
 }

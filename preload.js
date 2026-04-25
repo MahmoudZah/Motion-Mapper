@@ -35,6 +35,10 @@ contextBridge.exposeInMainWorld('motionAPI', {
   processVideoFrame: (frame) => ipcRenderer.invoke('process-video-frame', frame),
   setPreviewActive: (active) => ipcRenderer.invoke('set-preview-active', active),
 
+  toggleOverlays: () => ipcRenderer.invoke('toggle-overlays'),
+  closeOverlays: () => ipcRenderer.invoke('close-overlays'),
+  setOverlayCollapsed: (collapsed) => ipcRenderer.invoke('overlay-set-collapsed', collapsed),
+
   windowMinimize: () => ipcRenderer.invoke('window-minimize'),
   windowMaximize: () => ipcRenderer.invoke('window-maximize'),
   windowClose: () => ipcRenderer.invoke('window-close'),

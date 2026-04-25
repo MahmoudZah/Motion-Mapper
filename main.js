@@ -1,4 +1,4 @@
-const { app, BrowserWindow, ipcMain, Tray, Menu, nativeImage } = require('electron');
+const { app, BrowserWindow, ipcMain, Tray, Menu, nativeImage, screen } = require('electron');
 const { spawn } = require('child_process');
 const path = require('path');
 const readline = require('readline');
@@ -28,6 +28,8 @@ function shouldSuppressInjectedInput() {
 }
 
 let mainWindow = null;
+let overlayWindow = null;
+let alertsWindow = null;
 let tray = null;
 let isTracking = false;
 let previewActive = false;
@@ -70,7 +72,7 @@ function getPythonLaunchSpec() {
   }
 
   if (process.platform === 'win32') {
-    return { command: 'py', args: ['-3'] };
+    return { command: 'py', args: ['-3.13'] };
   }
 
   return { command: 'python3', args: [] };
@@ -121,6 +123,12 @@ function handleExerciseDetection(event) {
 
   if (isTracking) {
     mainWindow?.webContents.send('exercise-detection', payload);
+    if (overlayWindow && !overlayWindow.isDestroyed()) {
+      overlayWindow.webContents.send('exercise-detection', payload);
+    }
+    if (alertsWindow && !alertsWindow.isDestroyed()) {
+      alertsWindow.webContents.send('exercise-detection', payload);
+    }
   }
 
   if (isTracking && payload.status === 'valid' && state.active) {
@@ -151,6 +159,9 @@ function handleBackendEvent(event) {
       return;
     case 'pose_frame':
       mainWindow?.webContents.send('pose-frame', event);
+      if (overlayWindow && !overlayWindow.isDestroyed()) {
+        overlayWindow.webContents.send('pose-frame', event);
+      }
       resolveBackendRequest(event.requestId, event, Boolean(event.ok));
       return;
     case 'calibration_result':
@@ -423,6 +434,92 @@ function createWindow() {
   });
 }
 
+// Shared overlay layout constants
+const SHARED_W = 256;
+const EDGE_X = 20;       // px from right edge
+const EDGE_Y = 48;       // px from bottom (above taskbar)
+const STACK_GAP = 6;     // gap between camera and alerts windows
+
+const OVERLAY_H_EXPANDED = 180;
+const OVERLAY_H_COLLAPSED = 30;
+const ALERTS_H = 400;
+
+function overlayX(bounds) { return bounds.x + bounds.width - SHARED_W - EDGE_X; }
+function cameraY(bounds)  { return bounds.y + bounds.height - OVERLAY_H_EXPANDED - EDGE_Y; }
+function alertsY(bounds)  { return cameraY(bounds) - STACK_GAP - ALERTS_H; }
+
+function createOverlayWindow() {
+  if (overlayWindow && !overlayWindow.isDestroyed()) {
+    overlayWindow.focus();
+    return;
+  }
+
+  const { bounds } = screen.getPrimaryDisplay();
+
+  overlayWindow = new BrowserWindow({
+    x: overlayX(bounds),
+    y: cameraY(bounds),
+    width: SHARED_W,
+    height: OVERLAY_H_EXPANDED,
+    frame: false,
+    transparent: true,
+    alwaysOnTop: true,
+    skipTaskbar: true,
+    resizable: false,
+    webPreferences: {
+      preload: path.join(__dirname, 'preload.js'),
+      contextIsolation: true,
+      nodeIntegration: false,
+    },
+  });
+
+  const isDev = !app.isPackaged;
+  if (isDev) {
+    overlayWindow.loadURL('http://localhost:9000?overlay=1');
+  } else {
+    overlayWindow.loadFile(path.join(__dirname, 'dist', 'index.html'), { query: { overlay: '1' } });
+  }
+
+  overlayWindow.on('closed', () => {
+    overlayWindow = null;
+  });
+}
+
+function createAlertsWindow() {
+  if (alertsWindow && !alertsWindow.isDestroyed()) {
+    alertsWindow.focus();
+    return;
+  }
+
+  const { bounds } = screen.getPrimaryDisplay();
+
+  alertsWindow = new BrowserWindow({
+    x: overlayX(bounds),
+    y: alertsY(bounds),
+    width: SHARED_W,
+    height: ALERTS_H,
+    frame: false,
+    transparent: true,
+    alwaysOnTop: true,
+    skipTaskbar: true,
+    resizable: false,
+    webPreferences: {
+      preload: path.join(__dirname, 'preload.js'),
+      contextIsolation: true,
+      nodeIntegration: false,
+    },
+  });
+
+  const isDev = !app.isPackaged;
+  if (isDev) {
+    alertsWindow.loadURL('http://localhost:9000?alerts=1');
+  } else {
+    alertsWindow.loadFile(path.join(__dirname, 'dist', 'index.html'), { query: { alerts: '1' } });
+  }
+
+  alertsWindow.on('closed', () => { alertsWindow = null; });
+}
+
 function createTray() {
   if (tray) {
     tray.destroy();
@@ -606,6 +703,28 @@ ipcMain.handle('set-preview-active', async (_, shouldPreview) => {
       await stopBackend();
     }
     return { previewActive, backendReady: backendReady || Boolean(backendProcess) };
+  }
+});
+
+ipcMain.handle('toggle-overlays', () => {
+  const overlayOpen = overlayWindow && !overlayWindow.isDestroyed();
+  const alertsOpen = alertsWindow && !alertsWindow.isDestroyed();
+  if (overlayOpen || alertsOpen) {
+    overlayWindow?.close();
+    alertsWindow?.close();
+  } else {
+    createOverlayWindow();
+    createAlertsWindow();
+  }
+});
+ipcMain.handle('close-overlays', () => {
+  overlayWindow?.close();
+  alertsWindow?.close();
+});
+ipcMain.handle('overlay-set-collapsed', (_, collapsed) => {
+  if (overlayWindow && !overlayWindow.isDestroyed()) {
+    const h = collapsed ? OVERLAY_H_COLLAPSED : OVERLAY_H_EXPANDED;
+    overlayWindow.setSize(SHARED_W, h);
   }
 });
 
