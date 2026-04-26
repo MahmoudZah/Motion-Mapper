@@ -72,7 +72,7 @@ function getPythonLaunchSpec() {
   }
 
   if (process.platform === 'win32') {
-    return { command: 'py', args: ['-3.13'] };
+    return { command: 'py', args: ['-3'] };
   }
 
   return { command: 'python3', args: [] };
@@ -82,6 +82,12 @@ function updateExerciseActivity(active) {
   Object.keys(exerciseState).forEach((name) => {
     exerciseState[name].active = active;
   });
+}
+
+function getActiveExercises() {
+  return Object.entries(exerciseState)
+    .filter(([, state]) => state.active)
+    .map(([exercise]) => exercise);
 }
 
 function clearPendingBackendRequests(error) {
@@ -121,7 +127,7 @@ function handleExerciseDetection(event) {
   const payload = { ...event, key: state.key };
   state.lastDetection = payload.timestamp || Date.now();
 
-  if (isTracking) {
+  if (isTracking && state.active) {
     mainWindow?.webContents.send('exercise-detection', payload);
     if (overlayWindow && !overlayWindow.isDestroyed()) {
       overlayWindow.webContents.send('exercise-detection', payload);
@@ -131,7 +137,7 @@ function handleExerciseDetection(event) {
     }
   }
 
-  if (isTracking && payload.status === 'valid' && state.active) {
+  if (isTracking && state.active && payload.status === 'valid') {
     if (shouldSuppressInjectedInput()) {
       return;
     }
@@ -688,6 +694,7 @@ ipcMain.handle('process-video-frame', async (_, frame) => {
       type: 'process_frame',
       image: frame.image,
       timestamp: frame.timestamp,
+      activeExercises: isTracking ? getActiveExercises() : [],
     }, 10000);
   } catch (error) {
     console.error('[processing-backend] frame processing failed:', error);

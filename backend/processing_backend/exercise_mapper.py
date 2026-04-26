@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Any
+from typing import Any, Iterable
 
 import numpy as np
 
@@ -70,6 +70,8 @@ JUMP_STANDING_TRUNK_MIN = 75.0
 BICEP_CURL_TOP_MAX_ANGLE = 95.0
 BICEP_CURL_RESET_MIN_ANGLE = 145.0
 BICEP_CURL_ELBOW_TUCK_MAX = 0.3
+BICEP_CURL_WRIST_TRIGGER_HEIGHT = -0.35
+BICEP_CURL_WRIST_RESET_HEIGHT = -0.6
 
 SQUAT_TABLE_MEDIUM = {
     "quarter": {"knee": 45.0, "knee_sd": 0.0, "hip": 55.0, "hip_sd": 6.0, "trunk": 68.0, "trunk_sd": 4.0},
@@ -99,17 +101,46 @@ class ExerciseMapper:
         pose: PersonPose | None,
         inference_ms: float,
         timestamp_ms: int | None = None,
+        active_exercises: Iterable[str] | None = None,
     ) -> list[dict[str, Any]]:
         now = now_ms() if timestamp_ms is None else timestamp_ms
         if pose is None or pose.mean_confidence < self.config.min_person_confidence:
             return []
 
-        signals = [
-            self._detect_squat(pose),
-            self._detect_jumping_jack(pose),
-            self._detect_raise(pose, side="right"),
-            self._detect_raise(pose, side="left"),
-        ]
+        enabled = (
+            set(active_exercises)
+            if active_exercises is not None
+            else set(self.config.exercise_keys)
+        )
+        enabled = enabled.intersection(self.config.exercise_keys)
+        if not enabled:
+            return []
+
+        signals: list[ExerciseSignal | None] = []
+        squat_signal = self._detect_squat(pose) if "squats" in enabled else None
+        if squat_signal is not None:
+            signals.append(squat_signal)
+
+        squat_state = self.state["squats"]
+        squat_in_progress = (
+            "squats" in enabled
+            and (
+                squat_signal is not None
+                or squat_state.armed
+                or squat_state.squat_stage >= 1
+                or squat_state.depth_reached
+                or squat_state.bottom_reached
+            )
+        )
+
+        if not squat_in_progress:
+            if "jumpingJacks" in enabled:
+                signals.append(self._detect_jumping_jack(pose))
+            if "rightDumbbellRaise" in enabled:
+                signals.append(self._detect_raise(pose, side="right"))
+            if "leftDumbbellRaise" in enabled:
+                signals.append(self._detect_raise(pose, side="left"))
+
         events: list[dict[str, Any]] = []
         for signal in signals:
             if signal is None:
@@ -320,16 +351,19 @@ class ExerciseMapper:
         elbow_angle = angle_degrees(shoulder_point, elbow_point, wrist_point)
         wrist_height = (shoulder_point[1] - wrist_point[1]) / shoulder_width
         elbow_height = (shoulder_point[1] - elbow_point[1]) / shoulder_width
-        curl_top_max = BICEP_CURL_TOP_MAX_ANGLE * scale
-        reset_min = BICEP_CURL_RESET_MIN_ANGLE / scale
         elbow_tuck_max = BICEP_CURL_ELBOW_TUCK_MAX * scale
+        wrist_trigger_height = BICEP_CURL_WRIST_TRIGGER_HEIGHT / scale
+        wrist_reset_height = BICEP_CURL_WRIST_RESET_HEIGHT * scale
         elbow_tuck = abs(float(elbow_point[0]) - float(shoulder_point[0])) / shoulder_width
 
         exercise_name = "rightDumbbellRaise" if is_right else "leftDumbbellRaise"
         state = self.state[exercise_name]
-        reset_pose = elbow_angle >= reset_min and wrist_height <= 0.0
-        curled_pose = wrist_height > 0.0 and elbow_tuck <= elbow_tuck_max
+        reset_pose = wrist_height <= wrist_reset_height
+        curled_pose = wrist_height >= wrist_trigger_height
         elbow_tucked = elbow_tuck <= elbow_tuck_max
+
+        if reset_pose:
+            state.armed = False
 
         if curled_pose:
             if not state.armed:
@@ -352,7 +386,10 @@ class ExerciseMapper:
                 )
             return None
 
-        if elbow_angle <= curl_top_max and not elbow_tucked:
+        if state.armed:
+            return None
+
+        if wrist_height >= wrist_trigger_height and not elbow_tucked:
             label = "Right arm" if is_right else "Left arm"
             return ExerciseSignal(
                 exercise=exercise_name,
@@ -365,7 +402,7 @@ class ExerciseMapper:
                 metrics={"elbowTuck": elbow_tuck, "wristHeight": wrist_height},
             )
 
-        if elbow_tucked and wrist_height <= 0.0:
+        if elbow_tucked and wrist_height < wrist_trigger_height:
             label = "Right arm" if is_right else "Left arm"
             return ExerciseSignal(
                 exercise=exercise_name,
@@ -377,9 +414,6 @@ class ExerciseMapper:
                 rep_count=state.rep_count,
                 metrics={"elbowTuck": elbow_tuck, "wristHeight": wrist_height, "elbowHeight": elbow_height},
             )
-
-        if reset_pose:
-            state.armed = False
 
         return None
 
@@ -811,9 +845,9 @@ class ExerciseMapper:
 
     def _summarize_raise(self, pose: PersonPose | None, side: str) -> dict[str, Any]:
         scale = self.config.strictness_scale()
-        curl_top_max = BICEP_CURL_TOP_MAX_ANGLE * scale
-        reset_min = BICEP_CURL_RESET_MIN_ANGLE / scale
         elbow_tuck_max = BICEP_CURL_ELBOW_TUCK_MAX * scale
+        wrist_trigger_height = BICEP_CURL_WRIST_TRIGGER_HEIGHT / scale
+        wrist_reset_height = BICEP_CURL_WRIST_RESET_HEIGHT * scale
         shoulder = KEYPOINT_INDEX[f"{side}_shoulder"]
         elbow = KEYPOINT_INDEX[f"{side}_elbow"]
         wrist = KEYPOINT_INDEX[f"{side}_wrist"]
@@ -824,9 +858,9 @@ class ExerciseMapper:
             return self._empty_guidance(
                 label,
                 [
-                    ("reset", "Return to full extension", False, None, f"elbow >= {reset_min:.0f} deg"),
+                    ("reset", "Lower wrist to reset", False, None, f"wrist height <= {wrist_reset_height:.2f}"),
                     ("tuck", "Keep elbow tucked", False, None, f"elbow tuck <= {elbow_tuck_max:.2f}"),
-                    ("curl", "Bring wrist above shoulder", False, None, "wrist above shoulder"),
+                    ("curl", "Raise wrist to shoulder", False, None, f"wrist height >= {wrist_trigger_height:.2f}"),
                 ],
             )
 
@@ -845,15 +879,15 @@ class ExerciseMapper:
         wrist_height = (shoulder_point[1] - wrist_point[1]) / shoulder_width
         elbow_height = (shoulder_point[1] - elbow_point[1]) / shoulder_width
         elbow_tuck = abs(float(elbow_point[0]) - float(shoulder_point[0])) / shoulder_width
-        reset_pose = elbow_angle >= reset_min and wrist_height <= 0.0
-        curled_pose = wrist_height > 0.0 and elbow_tuck <= elbow_tuck_max
+        reset_pose = wrist_height <= wrist_reset_height
+        curled_pose = wrist_height >= wrist_trigger_height
         elbow_tucked = elbow_tuck <= elbow_tuck_max
         phase = "transition"
         if curled_pose:
             phase = "curled"
         elif reset_pose:
             phase = "reset"
-        elif elbow_angle < reset_min:
+        elif wrist_height > wrist_reset_height:
             phase = "curling"
 
         return {
@@ -869,9 +903,9 @@ class ExerciseMapper:
             },
             "steps": self._build_steps(
                 [
-                    ("reset", "Return to full extension", reset_pose, elbow_angle, f"elbow >= {reset_min:.0f} deg"),
+                    ("reset", "Lower wrist to reset", reset_pose, wrist_height, f"wrist height <= {wrist_reset_height:.2f}"),
                     ("tuck", "Keep elbow tucked", elbow_tucked, elbow_tuck, f"elbow tuck <= {elbow_tuck_max:.2f}"),
-                    ("curl", "Bring wrist above shoulder", wrist_height > 0.0, wrist_height, "wrist above shoulder"),
+                    ("curl", "Raise wrist to shoulder", wrist_height >= wrist_trigger_height, wrist_height, f"wrist height >= {wrist_trigger_height:.2f}"),
                 ],
                 formatter=self._format_metric_value,
             ),

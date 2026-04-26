@@ -170,10 +170,11 @@ class MotionProcessingService:
         primary = result.primary_person
         self._latest_pose = primary
         self._latest_frame_shape = frame.shape[:2]
-        squat_events = self.mapper.evaluate(
+        exercise_events = self.mapper.evaluate(
             pose=primary,
             inference_ms=result.inference_ms,
             timestamp_ms=timestamp_ms,
+            active_exercises=command.get("activeExercises"),
         )
         guidance = self.mapper.summarize_pose(primary)
 
@@ -194,7 +195,7 @@ class MotionProcessingService:
             }
         )
 
-        for event in squat_events:
+        for event in exercise_events:
             emit_event(event)
 
     def _decode_frame_payload(self, image_payload: str | None):
