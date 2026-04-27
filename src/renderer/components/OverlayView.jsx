@@ -123,7 +123,7 @@ export default function OverlayView() {
         <div className="flex items-center gap-1.5" style={{ WebkitAppRegion: 'no-drag' }}>
           <div className={`w-1.5 h-1.5 rounded-full shrink-0 ${poseDetected ? 'bg-neon animate-pulse' : 'bg-gray-600'}`} />
           <Gamepad2 size={10} className="text-neon/70" />
-          <span className="text-[9px] text-neon/70 font-display uppercase tracking-widest leading-none">Camera</span>
+          <span className="text-[9px] text-neon/70 font-display uppercase tracking-widest leading-none">Gamecha</span>
         </div>
         <div className="flex items-center gap-0.5" style={{ WebkitAppRegion: 'no-drag' }}>
           <button onClick={toggleCollapse} className="w-5 h-5 flex items-center justify-center rounded hover:bg-white/10 transition-colors">
@@ -161,7 +161,7 @@ export default function OverlayView() {
                   <line key={`${s}-${e}`}
                     x1={keypoints[s][0]} y1={keypoints[s][1]}
                     x2={keypoints[e][0]} y2={keypoints[e][1]}
-                    stroke="rgba(0,255,153,0.88)" strokeWidth="3" strokeLinecap="round"
+                    stroke="rgba(200,40,40,0.9)" strokeWidth="3" strokeLinecap="round"
                   />
                 );
               })}
@@ -170,7 +170,7 @@ export default function OverlayView() {
                 return (
                   <circle key={i} cx={coords[0]} cy={coords[1]}
                     r={i >= 5 ? 5 : 4} fill="rgba(255,255,255,0.9)"
-                    stroke="rgba(0,255,153,0.95)" strokeWidth="2"
+                    stroke="rgba(200,40,40,0.95)" strokeWidth="2"
                   />
                 );
               })}

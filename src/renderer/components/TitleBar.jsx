@@ -12,7 +12,7 @@ export default function TitleBar() {
       <div className="flex items-center gap-2">
         <Gamepad2 size={18} className="text-neon" />
         <span className="font-display text-xs tracking-widest text-neon/80 uppercase">
-          MotionMapper
+          Gamecha
         </span>
       </div>
 

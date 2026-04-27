@@ -194,7 +194,7 @@ export default function PoseCameraViewport({
               y1={keypoints[start][1]}
               x2={keypoints[end][0]}
               y2={keypoints[end][1]}
-              stroke="rgba(0,255,153,0.85)"
+              stroke="rgba(200,40,40,0.9)"
               strokeWidth="3"
               strokeLinecap="round"
             />
@@ -209,7 +209,7 @@ export default function PoseCameraViewport({
               cy={coords[1]}
               r={index >= 5 ? 5 : 4}
               fill="white"
-              stroke="rgba(0,255,153,0.95)"
+              stroke="rgba(200,40,40,0.95)"
               strokeWidth="2"
             />
           );

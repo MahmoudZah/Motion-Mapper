@@ -72,7 +72,7 @@ function getPythonLaunchSpec() {
   }
 
   if (process.platform === 'win32') {
-    return { command: 'py', args: ['-3'] };
+    return { command: 'py', args: ['-3.13'] };
   }
 
   return { command: 'python3', args: [] };
@@ -416,7 +416,7 @@ function createWindow() {
     minHeight: 700,
     frame: false,
     transparent: false,
-    backgroundColor: '#0d1117',
+    backgroundColor: '#000000',
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
       contextIsolation: true,
@@ -533,11 +533,11 @@ function createTray() {
 
   const icon = nativeImage.createEmpty();
   tray = new Tray(icon);
-  tray.setToolTip('MotionMapper - Virtual Controller');
+  tray.setToolTip('Gamecha - Virtual Controller');
 
   const contextMenu = Menu.buildFromTemplate([
     {
-      label: 'Show MotionMapper',
+      label: 'Show Gamecha',
       click: () => {
         if (mainWindow) {
           mainWindow.show();
