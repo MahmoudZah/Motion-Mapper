@@ -134,6 +134,51 @@ class MotionProcessingService:
             )
             return
 
+        if command_type == "calibrate_exercise":
+            exercise = command.get("exercise", "")
+            if self._latest_pose is None:
+                emit_event(
+                    {
+                        "type": "calibration_result",
+                        "requestId": request_id,
+                        "command": "calibrate_exercise",
+                        "ok": False,
+                        "exercise": exercise,
+                        "message": "No visible person — stand in frame first.",
+                        "timestamp": timestamp_ms,
+                    }
+                )
+            else:
+                result = self.mapper.calibrate_exercise(
+                    exercise, self._latest_pose, timestamp_ms
+                )
+                emit_event(
+                    {
+                        "type": "calibration_result",
+                        "requestId": request_id,
+                        "command": "calibrate_exercise",
+                        "calibrationStatus": self.mapper.calibration_status(),
+                        "timestamp": timestamp_ms,
+                        **result,
+                    }
+                )
+            return
+
+        if command_type == "remove_calibration":
+            exercise = command.get("exercise", "")
+            result = self.mapper.remove_calibration(exercise)
+            emit_event(
+                {
+                    "type": "calibration_result",
+                    "requestId": request_id,
+                    "command": "remove_calibration",
+                    "calibrationStatus": self.mapper.calibration_status(),
+                    "timestamp": timestamp_ms,
+                    **result,
+                }
+            )
+            return
+
         if command_type == "process_frame":
             self._process_frame(command, timestamp_ms)
             return

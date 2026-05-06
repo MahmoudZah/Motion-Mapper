@@ -40,43 +40,66 @@ export default function PoseCameraViewport({
   useEffect(() => {
     let cancelled = false;
 
+    const MAX_RETRIES = 3;
+    const RETRY_DELAY_MS = 1500;
+
+    async function attemptCameraAccess() {
+      const stream = await navigator.mediaDevices.getUserMedia({
+        audio: false,
+        video: {
+          facingMode: 'user',
+          width: { ideal: 640 },
+          height: { ideal: 360 },
+        },
+      });
+      return stream;
+    }
+
     async function startCamera() {
       if (!navigator?.mediaDevices?.getUserMedia) {
         setCameraError('This environment does not expose webcam access.');
         return;
       }
-      try {
-        const stream = await navigator.mediaDevices.getUserMedia({
-          audio: false,
-          video: {
-            facingMode: 'user',
-            width: { ideal: 640 },
-            height: { ideal: 360 },
-          },
-        });
-        if (cancelled) {
-          stream.getTracks().forEach((track) => track.stop());
-          return;
+
+      let lastError = null;
+      for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
+        if (cancelled) return;
+        try {
+          const stream = await attemptCameraAccess();
+          if (cancelled) {
+            stream.getTracks().forEach((track) => track.stop());
+            return;
+          }
+          streamRef.current = stream;
+          const video = videoRef.current;
+          if (video) {
+            video.srcObject = stream;
+            video.onloadedmetadata = async () => {
+              try {
+                await video.play();
+              } catch {
+                // autoplay failures are rare in Electron, but the preview still exists.
+              }
+              if (!cancelled) {
+                setCameraReady(true);
+              }
+            };
+          }
+          return; // success – exit the retry loop
+        } catch (error) {
+          lastError = error;
+          console.warn(`[Camera] Attempt ${attempt}/${MAX_RETRIES} failed:`, error?.message);
+          if (attempt < MAX_RETRIES && !cancelled) {
+            await new Promise((resolve) => setTimeout(resolve, RETRY_DELAY_MS));
+          }
         }
-        streamRef.current = stream;
-        const video = videoRef.current;
-        if (video) {
-          video.srcObject = stream;
-          video.onloadedmetadata = async () => {
-            try {
-              await video.play();
-            } catch {
-              // autoplay failures are rare in Electron, but the preview still exists.
-            }
-            if (!cancelled) {
-              setCameraReady(true);
-            }
-          };
-        }
-      } catch (error) {
-        if (!cancelled) {
-          setCameraError(error?.message || 'Unable to access the camera.');
-        }
+      }
+
+      // All retries exhausted
+      if (!cancelled) {
+        setCameraError(
+          lastError?.message || 'Unable to access the camera.'
+        );
       }
     }
 

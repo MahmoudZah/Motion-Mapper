@@ -1,4 +1,4 @@
-const { app, BrowserWindow, ipcMain, Tray, Menu, nativeImage, screen } = require('electron');
+const { app, BrowserWindow, ipcMain, Tray, Menu, nativeImage, screen, session } = require('electron');
 const { spawn } = require('child_process');
 const path = require('path');
 const readline = require('readline');
@@ -171,13 +171,20 @@ function handleBackendEvent(event) {
       resolveBackendRequest(event.requestId, event, Boolean(event.ok));
       return;
     case 'calibration_result':
-      if (event.calibration) {
-        calibrationData = {
-          ...calibrationData,
-          ...event.calibration,
-        };
+      if (event.command === 'calibrate_exercise' || event.command === 'remove_calibration') {
+        // Per-exercise calibration — resolve with the raw result so the
+        // renderer gets { ok, exercise, message, calibrationStatus }.
+        resolveBackendRequest(event.requestId, event, Boolean(event.ok));
+      } else {
+        // Global neutral-pose calibration.
+        if (event.calibration) {
+          calibrationData = {
+            ...calibrationData,
+            ...event.calibration,
+          };
+        }
+        resolveBackendRequest(event.requestId, calibrationData, Boolean(event.ok));
       }
-      resolveBackendRequest(event.requestId, calibrationData, Boolean(event.ok));
       return;
     case 'config_updated':
       if (typeof event.sensitivity === 'number') {
@@ -686,6 +693,38 @@ ipcMain.handle('set-provider', async (_, provider) => {
   return calibrationData;
 });
 
+ipcMain.handle('calibrate-exercise', async (_, exercise) => {
+  if (!backendProcess || !backendReady) {
+    return { ok: false, exercise, message: 'Backend is not running. Start tracking first.' };
+  }
+  try {
+    const result = await sendBackendCommand({
+      type: 'calibrate_exercise',
+      exercise,
+    });
+    return result;
+  } catch (error) {
+    console.error('[processing-backend] exercise calibration failed:', error);
+    return { ok: false, exercise, message: error.message };
+  }
+});
+
+ipcMain.handle('remove-calibration', async (_, exercise) => {
+  if (!backendProcess || !backendReady) {
+    return { ok: false, exercise, message: 'Backend is not running.' };
+  }
+  try {
+    const result = await sendBackendCommand({
+      type: 'remove_calibration',
+      exercise,
+    });
+    return result;
+  } catch (error) {
+    console.error('[processing-backend] remove calibration failed:', error);
+    return { ok: false, exercise, message: error.message };
+  }
+});
+
 ipcMain.handle('get-calibration', () => calibrationData);
 ipcMain.handle('process-video-frame', async (_, frame) => {
   try {
@@ -745,6 +784,15 @@ ipcMain.handle('window-close', () => mainWindow?.close());
 // ── App Lifecycle ──
 
 app.whenReady().then(() => {
+  // Grant camera/media permissions to the renderer process
+  session.defaultSession.setPermissionRequestHandler((webContents, permission, callback) => {
+    const allowed = ['media', 'mediaKeySystem'].includes(permission);
+    callback(allowed);
+  });
+  session.defaultSession.setPermissionCheckHandler((webContents, permission) => {
+    return ['media', 'mediaKeySystem'].includes(permission);
+  });
+
   createWindow();
   createTray();
 });

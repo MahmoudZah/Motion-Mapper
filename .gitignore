@@ -15,3 +15,4 @@ backend/models/*.pt
 backend/models/*.task
 
 src/renderer/components/*Prototype.jsx
+models/yolov8n-pose.pt

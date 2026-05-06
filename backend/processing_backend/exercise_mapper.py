@@ -33,6 +33,21 @@ class ExerciseState:
     baseline_knee_y: float | None = None
     baseline_ankle_span: float | None = None
     standing_frames: int = 0
+    idle_frames: int = 0
+
+
+@dataclass(slots=True)
+class ExerciseCalibration:
+    """Fixed reference captured once during explicit calibration.
+
+    Unlike the EMA baselines in ExerciseState, these values do NOT drift
+    frame-to-frame.  They are set by `calibrate_exercise()` and cleared
+    by `remove_calibration()`.
+    """
+    hip_y: float
+    knee_y: float
+    torso_len: float
+    timestamp_ms: int = 0
 
 
 @dataclass(slots=True)
@@ -87,9 +102,126 @@ class ExerciseMapper:
             name: ExerciseState()
             for name in config.exercise_keys
         }
+        # Per-exercise calibration store.  Keys are exercise names;
+        # values are ExerciseCalibration snapshots captured by the user.
+        self._calibrations: dict[str, ExerciseCalibration] = {}
+
+    # ------------------------------------------------------------------
+    # Calibration API
+    # ------------------------------------------------------------------
+
+    def calibrate_exercise(
+        self,
+        exercise: str,
+        pose: PersonPose,
+        timestamp_ms: int = 0,
+    ) -> dict[str, Any]:
+        """Capture a fixed standing-position reference for *exercise*.
+
+        Returns a status dict.  Fails if the exercise is already
+        calibrated (must call ``remove_calibration`` first) or if the
+        required joints are not visible.
+        """
+        if exercise in self._calibrations:
+            return {
+                "ok": False,
+                "exercise": exercise,
+                "message": (
+                    f"'{exercise}' is already calibrated.  "
+                    "Remove the existing calibration before re-calibrating."
+                ),
+            }
+
+        required = [
+            KEYPOINT_INDEX["left_hip"],
+            KEYPOINT_INDEX["right_hip"],
+            KEYPOINT_INDEX["left_knee"],
+            KEYPOINT_INDEX["right_knee"],
+            KEYPOINT_INDEX["left_shoulder"],
+            KEYPOINT_INDEX["right_shoulder"],
+        ]
+        if not self._has_confidence(pose, required):
+            return {
+                "ok": False,
+                "exercise": exercise,
+                "message": "Required joints are not visible — stand in frame.",
+            }
+
+        left_hip = point(pose.keypoints, KEYPOINT_INDEX["left_hip"])
+        right_hip = point(pose.keypoints, KEYPOINT_INDEX["right_hip"])
+        left_knee = point(pose.keypoints, KEYPOINT_INDEX["left_knee"])
+        right_knee = point(pose.keypoints, KEYPOINT_INDEX["right_knee"])
+        left_shoulder = point(pose.keypoints, KEYPOINT_INDEX["left_shoulder"])
+        right_shoulder = point(pose.keypoints, KEYPOINT_INDEX["right_shoulder"])
+
+        hip_mid = midpoint(left_hip, right_hip)
+        knee_mid = midpoint(left_knee, right_knee)
+        torso_len_val = mean_or_none([
+            distance(left_shoulder, left_hip),
+            distance(right_shoulder, right_hip),
+        ])
+        if torso_len_val is None or torso_len_val <= 1e-6:
+            return {
+                "ok": False,
+                "exercise": exercise,
+                "message": "Could not compute torso length — check pose.",
+            }
+
+        cal = ExerciseCalibration(
+            hip_y=float(hip_mid[1]),
+            knee_y=float(knee_mid[1]),
+            torso_len=torso_len_val,
+            timestamp_ms=timestamp_ms,
+        )
+        self._calibrations[exercise] = cal
+
+        # Also seed the EMA baselines so the first frame after calibration
+        # doesn't produce a spike.
+        if exercise in self.state:
+            self.state[exercise].baseline_hip_y = cal.hip_y
+            self.state[exercise].baseline_knee_y = cal.knee_y
+
+        return {
+            "ok": True,
+            "exercise": exercise,
+            "message": "Calibration captured.",
+            "hipY": round(cal.hip_y, 2),
+            "kneeY": round(cal.knee_y, 2),
+            "torsoLen": round(cal.torso_len, 2),
+        }
+
+    def remove_calibration(self, exercise: str) -> dict[str, Any]:
+        """Remove calibration for *exercise*, allowing re-calibration."""
+        if exercise not in self._calibrations:
+            return {
+                "ok": False,
+                "exercise": exercise,
+                "message": f"'{exercise}' has no calibration to remove.",
+            }
+        del self._calibrations[exercise]
+        # Reset the EMA baselines so the detector re-learns from scratch.
+        if exercise in self.state:
+            self.state[exercise].baseline_hip_y = None
+            self.state[exercise].baseline_knee_y = None
+        return {
+            "ok": True,
+            "exercise": exercise,
+            "message": "Calibration removed.  You may re-calibrate.",
+        }
+
+    def is_calibrated(self, exercise: str) -> bool:
+        return exercise in self._calibrations
+
+    def calibration_status(self) -> dict[str, bool]:
+        """Return calibration state for every known exercise."""
+        return {
+            name: name in self._calibrations
+            for name in self.config.exercise_keys
+        }
 
     def summarize_pose(self, pose: PersonPose | None) -> dict[str, Any]:
         return {
+            "idle": self._summarize_idle(pose),
             "squats": self._summarize_squat(pose),
             "jumpingJacks": self._summarize_jumping_jack(pose),
             "rightDumbbellRaise": self._summarize_raise(pose, side="right"),
@@ -114,6 +246,23 @@ class ExerciseMapper:
         )
         enabled = enabled.intersection(self.config.exercise_keys)
         if not enabled:
+            return []
+
+        # ── Idle-pose gate ──────────────────────────────────────────
+        # When the user is in a neutral standing pose (arms at sides,
+        # legs straight, upright trunk) suppress ALL exercise alerts.
+        # We require 5 consecutive idle frames to engage the gate so
+        # a single transitional frame doesn't mute everything.
+        idle = self._is_idle_pose(pose)
+        idle_state = self.state.get("squats")  # use any state for counter
+        if idle_state is not None:
+            if idle:
+                idle_state.idle_frames = min(idle_state.idle_frames + 1, 30)
+            else:
+                idle_state.idle_frames = 0
+
+        if idle_state is not None and idle_state.idle_frames >= 5:
+            # User is idle — no alerts.
             return []
 
         signals: list[ExerciseSignal | None] = []
@@ -241,7 +390,11 @@ class ExerciseMapper:
         if current_stage >= 2:
             state.depth_reached = True
 
-        if state.armed and current_stage >= 3 and not state.bottom_reached:
+        # A squat rep requires the hip markers to be at or below knee
+        # markers (hip_y >= knee_y in screen coords where Y grows down).
+        hip_at_knee = bool(metrics.get("hipAtKneeLevel", False))
+
+        if state.armed and current_stage >= 3 and hip_at_knee and not state.bottom_reached:
             state.bottom_reached = True
             state.rep_count += 1
             return ExerciseSignal(
@@ -420,6 +573,78 @@ class ExerciseMapper:
     def _has_confidence(self, pose: PersonPose, indices: list[int]) -> bool:
         return all(pose.scores[index] >= self.config.min_joint_confidence for index in indices)
 
+    def _is_idle_pose(self, pose: PersonPose) -> bool:
+        """Return True when the user is in a neutral standing pose.
+
+        Idle = upright trunk, straight legs, both wrists below hips
+        (arms hanging at sides).  This is the "do nothing" position.
+        """
+        required = [
+            KEYPOINT_INDEX["left_shoulder"],
+            KEYPOINT_INDEX["right_shoulder"],
+            KEYPOINT_INDEX["left_hip"],
+            KEYPOINT_INDEX["right_hip"],
+            KEYPOINT_INDEX["left_knee"],
+            KEYPOINT_INDEX["right_knee"],
+            KEYPOINT_INDEX["left_wrist"],
+            KEYPOINT_INDEX["right_wrist"],
+            KEYPOINT_INDEX["left_elbow"],
+            KEYPOINT_INDEX["right_elbow"],
+        ]
+        if not self._has_confidence(pose, required):
+            return False
+
+        left_shoulder = point(pose.keypoints, KEYPOINT_INDEX["left_shoulder"])
+        right_shoulder = point(pose.keypoints, KEYPOINT_INDEX["right_shoulder"])
+        left_hip = point(pose.keypoints, KEYPOINT_INDEX["left_hip"])
+        right_hip = point(pose.keypoints, KEYPOINT_INDEX["right_hip"])
+        left_knee = point(pose.keypoints, KEYPOINT_INDEX["left_knee"])
+        right_knee = point(pose.keypoints, KEYPOINT_INDEX["right_knee"])
+        left_wrist = point(pose.keypoints, KEYPOINT_INDEX["left_wrist"])
+        right_wrist = point(pose.keypoints, KEYPOINT_INDEX["right_wrist"])
+        left_elbow = point(pose.keypoints, KEYPOINT_INDEX["left_elbow"])
+        right_elbow = point(pose.keypoints, KEYPOINT_INDEX["right_elbow"])
+        left_ankle = point(pose.keypoints, KEYPOINT_INDEX["left_ankle"])
+        right_ankle = point(pose.keypoints, KEYPOINT_INDEX["right_ankle"])
+
+        hip_mid = midpoint(left_hip, right_hip)
+        shoulder_mid = midpoint(left_shoulder, right_shoulder)
+
+        # Upright trunk (>= 78 deg from horizontal)
+        trunk_angle = segment_angle_from_horizontal(hip_mid, shoulder_mid)
+        if trunk_angle < 78.0:
+            return False
+
+        # Legs relatively straight (knee flex <= 18 deg)
+        knee_flex = mean_or_none([
+            max(0.0, 180.0 - angle_degrees(left_hip, left_knee, left_ankle)),
+            max(0.0, 180.0 - angle_degrees(right_hip, right_knee, right_ankle)),
+        ])
+        if knee_flex is None or knee_flex > 18.0:
+            return False
+
+        # Arms hanging: both wrists at or below hip level
+        # (in screen coords Y grows down, so wrist_y >= hip_y)
+        if left_wrist[1] < left_hip[1] or right_wrist[1] < right_hip[1]:
+            return False
+
+        # Elbows relatively straight (arm angle >= 140 deg)
+        left_arm_angle = angle_degrees(left_shoulder, left_elbow, left_wrist)
+        right_arm_angle = angle_degrees(right_shoulder, right_elbow, right_wrist)
+        if left_arm_angle < 140.0 or right_arm_angle < 140.0:
+            return False
+
+        return True
+
+    def _summarize_idle(self, pose: PersonPose | None) -> dict[str, Any]:
+        """Return idle-pose status for the guidance HUD."""
+        if pose is None:
+            return {"detected": False, "active": False}
+        idle = self._is_idle_pose(pose)
+        idle_state = self.state.get("squats")
+        active = idle_state is not None and idle_state.idle_frames >= 5
+        return {"detected": idle, "active": active}
+
     def _confidence_for(self, pose: PersonPose, indices: list[int]) -> float:
         values = [float(pose.scores[index]) for index in indices]
         if not values:
@@ -525,6 +750,9 @@ class ExerciseMapper:
         else:
             stage = 0
 
+        # Check whether hips are at or below knees (screen Y grows down).
+        hip_at_knee_level = float(hip_mid[1]) >= float(knee_mid[1])
+
         return {
             "stage": stage,
             "proxyStage": proxy_stage,
@@ -537,6 +765,7 @@ class ExerciseMapper:
             "trunkAngle": trunk_angle,
             "hipDrop": hip_drop,
             "kneeDrop": knee_drop,
+            "hipAtKneeLevel": hip_at_knee_level,
             "confidence": self._confidence_for(
                 pose,
                 [
@@ -655,8 +884,22 @@ class ExerciseMapper:
         if state.baseline_hip_y is None or state.baseline_knee_y is None:
             return None
 
-        hip_rise = (state.baseline_hip_y - float(hip_mid[1])) / torso_len
-        knee_rise = (state.baseline_knee_y - float(knee_mid[1])) / torso_len
+        # --- Calibration-aware rise calculation ---
+        # If the user has calibrated "jumpingJacks", use the fixed
+        # calibrated hip/knee Y as the reference ceiling.  A "jump" is
+        # only counted when the current position rises ABOVE the
+        # calibrated standing level, not merely above the drifting EMA.
+        # This prevents squat-recovery from being mistaken for a jump.
+        cal = self._calibrations.get("jumpingJacks")
+        if cal is not None:
+            ref_hip_y = min(state.baseline_hip_y, cal.hip_y)
+            ref_knee_y = min(state.baseline_knee_y, cal.knee_y)
+        else:
+            ref_hip_y = state.baseline_hip_y
+            ref_knee_y = state.baseline_knee_y
+
+        hip_rise = (ref_hip_y - float(hip_mid[1])) / torso_len
+        knee_rise = (ref_knee_y - float(knee_mid[1])) / torso_len
 
         return {
             "hipRise": max(0.0, hip_rise),

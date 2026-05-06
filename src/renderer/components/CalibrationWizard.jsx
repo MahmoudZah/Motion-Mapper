@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useState, useCallback } from 'react';
 import {
   SlidersHorizontal,
   UserCheck,
@@ -7,10 +7,29 @@ import {
   ChevronRight,
   ChevronLeft,
   RotateCcw,
+  Crosshair,
+  Trash2,
+  Loader2,
 } from 'lucide-react';
 import PoseCameraViewport from './PoseCameraViewport';
 
+const api = typeof window !== 'undefined' && window.motionAPI ? window.motionAPI : null;
+
 const CALIBRATION_KEYPOINTS = [5, 6, 11, 12, 13, 14];
+
+const EXERCISE_LABELS = {
+  squats: 'Squats',
+  jumpingJacks: 'Jumping Jacks',
+  rightDumbbellRaise: 'Right Bicep Curl',
+  leftDumbbellRaise: 'Left Bicep Curl',
+};
+
+const EXERCISE_HINTS = {
+  squats: 'Locks standing hip position for squat depth tracking.',
+  jumpingJacks: 'Prevents squat recovery from triggering false jumps.',
+  rightDumbbellRaise: 'Locks neutral arm position for right curl detection.',
+  leftDumbbellRaise: 'Locks neutral arm position for left curl detection.',
+};
 
 const steps = [
   {
@@ -46,6 +65,167 @@ function StatusChip({ label, done }) {
       }`}
     >
       {label}
+    </div>
+  );
+}
+
+function ExerciseCalibrationPanel() {
+  const [calibrationStatus, setCalibrationStatus] = useState({});
+  const [loading, setLoading] = useState(null);
+  const [message, setMessage] = useState(null);
+
+  const handleCalibrate = useCallback(async (exercise) => {
+    if (!api?.calibrateExercise) return;
+    setLoading(exercise);
+    setMessage(null);
+    try {
+      const result = await api.calibrateExercise(exercise);
+      if (result.calibrationStatus) {
+        setCalibrationStatus(result.calibrationStatus);
+      } else {
+        setCalibrationStatus((prev) => ({
+          ...prev,
+          [exercise]: Boolean(result.ok),
+        }));
+      }
+      setMessage({
+        exercise,
+        ok: result.ok,
+        text: result.message || (result.ok ? 'Calibrated' : 'Failed'),
+      });
+    } catch (err) {
+      setMessage({ exercise, ok: false, text: err.message || 'Calibration failed.' });
+    } finally {
+      setLoading(null);
+    }
+  }, []);
+
+  const handleRemove = useCallback(async (exercise) => {
+    if (!api?.removeCalibration) return;
+    setLoading(exercise);
+    setMessage(null);
+    try {
+      const result = await api.removeCalibration(exercise);
+      if (result.calibrationStatus) {
+        setCalibrationStatus(result.calibrationStatus);
+      } else {
+        setCalibrationStatus((prev) => ({
+          ...prev,
+          [exercise]: false,
+        }));
+      }
+      setMessage({
+        exercise,
+        ok: result.ok,
+        text: result.message || (result.ok ? 'Removed' : 'Failed'),
+      });
+    } catch (err) {
+      setMessage({ exercise, ok: false, text: err.message || 'Removal failed.' });
+    } finally {
+      setLoading(null);
+    }
+  }, []);
+
+  return (
+    <div className="bg-surface border border-panel-border rounded-xl p-3 flex flex-col h-full">
+      <div className="flex items-center gap-2 mb-3 px-1">
+        <Crosshair size={14} className="text-neon shrink-0" />
+        <h3 className="text-xs text-white font-semibold truncate">Exercise Calibration</h3>
+      </div>
+
+      <div className="space-y-1.5 flex-1 overflow-y-auto">
+        {Object.entries(EXERCISE_LABELS).map(([key, label]) => {
+          const isCalibrated = Boolean(calibrationStatus[key]);
+          const isLoading = loading === key;
+          const isHighlighted = key === 'jumpingJacks';
+
+          return (
+            <div
+              key={key}
+              className={`rounded-lg border px-3 py-2.5 transition-all ${
+                isCalibrated
+                  ? 'border-neon/30 bg-neon/5'
+                  : isHighlighted
+                    ? 'border-amber-500/30 bg-amber-500/5'
+                    : 'border-panel-border bg-panel'
+              }`}
+            >
+              <div className="flex items-center gap-2 mb-1.5">
+                <div
+                  className={`w-2 h-2 rounded-full shrink-0 transition-colors ${
+                    isCalibrated ? 'bg-neon shadow-neon' : 'bg-gray-600'
+                  }`}
+                />
+                <span className={`text-xs font-medium truncate ${isCalibrated ? 'text-neon' : 'text-white'}`}>
+                  {label}
+                </span>
+                {isCalibrated && (
+                  <span className="text-[8px] uppercase tracking-wider text-neon/70 bg-neon/10 rounded px-1 py-0.5 shrink-0">
+                    Locked
+                  </span>
+                )}
+                {isHighlighted && !isCalibrated && (
+                  <span className="text-[8px] uppercase tracking-wider text-amber-400/80 bg-amber-500/10 rounded px-1 py-0.5 shrink-0">
+                    Rec
+                  </span>
+                )}
+              </div>
+              <p className="text-[9px] text-gray-500 mb-2 leading-tight">{EXERCISE_HINTS[key]}</p>
+              {!isCalibrated ? (
+                <button
+                  onClick={() => handleCalibrate(key)}
+                  disabled={isLoading}
+                  className={`
+                    w-full flex items-center justify-center gap-1.5 px-2 py-1.5 rounded-md text-[11px] font-medium transition-all
+                    ${isLoading
+                      ? 'bg-panel text-gray-500 cursor-wait border border-panel-border'
+                      : 'bg-neon/15 text-neon border border-neon/30 hover:bg-neon/25 hover:shadow-neon'}
+                  `}
+                >
+                  {isLoading ? (
+                    <Loader2 size={11} className="animate-spin" />
+                  ) : (
+                    <Crosshair size={11} />
+                  )}
+                  Calibrate
+                </button>
+              ) : (
+                <button
+                  onClick={() => handleRemove(key)}
+                  disabled={isLoading}
+                  className={`
+                    w-full flex items-center justify-center gap-1.5 px-2 py-1.5 rounded-md text-[11px] font-medium transition-all
+                    ${isLoading
+                      ? 'bg-panel text-gray-500 cursor-wait border border-panel-border'
+                      : 'bg-red-500/10 text-red-400 border border-red-500/20 hover:bg-red-500/20'}
+                  `}
+                >
+                  {isLoading ? (
+                    <Loader2 size={11} className="animate-spin" />
+                  ) : (
+                    <Trash2 size={11} />
+                  )}
+                  Remove
+                </button>
+              )}
+            </div>
+          );
+        })}
+      </div>
+
+      {/* Feedback toast */}
+      {message && (
+        <div
+          className={`mt-2 rounded-md px-2 py-1.5 text-[10px] flex items-center gap-1.5 transition-all ${
+            message.ok
+              ? 'bg-neon/10 text-neon border border-neon/20'
+              : 'bg-red-500/10 text-red-400 border border-red-500/20'
+          }`}
+        >
+          {message.ok ? <CheckCircle2 size={12} /> : <span className="text-red-400">&#x2715;</span>}
+          <span className="truncate">{message.text}</span>
+        </div>
+      )}
     </div>
   );
 }
@@ -149,15 +329,21 @@ export default function CalibrationWizardPrototype({
       </div>
 
       <div className="bg-surface border border-panel-border rounded-xl p-6">
-        <div className="flex items-start gap-4">
+        <div className="flex items-start gap-4 mb-4">
           <div className="w-12 h-12 rounded-xl bg-neon/10 flex items-center justify-center shrink-0">
             <StepIcon size={24} className="text-neon" />
           </div>
           <div className="flex-1">
             <h3 className="text-white font-semibold mb-1">{steps[currentStep].title}</h3>
-            <p className="text-sm text-gray-400 mb-4">{steps[currentStep].description}</p>
+            <p className="text-sm text-gray-400">{steps[currentStep].description}</p>
+          </div>
+        </div>
 
-            <div className="relative w-full aspect-video bg-panel rounded-lg border border-panel-border overflow-hidden mb-4">
+        {/* ── Camera + Calibration Sidebar (side by side) ── */}
+        <div className="flex gap-4 mb-4">
+          {/* Camera viewport — left */}
+          <div className="flex-1 min-w-0">
+            <div className="relative w-full aspect-video bg-panel rounded-lg border border-panel-border overflow-hidden">
               <PoseCameraViewport
                 poseFrame={poseFrame}
                 emptyTitle="Stand where your full body is visible"
@@ -185,46 +371,51 @@ export default function CalibrationWizardPrototype({
                 )}
               />
             </div>
+          </div>
 
-            <p className="text-xs text-gray-500 italic mb-4">{steps[currentStep].instruction}</p>
-            <div className="flex flex-wrap gap-2 mb-4">
-              <StatusChip label="Camera live" done={cameraLive} />
-              <StatusChip label="Body detected" done={bodyDetected} />
-              <StatusChip label="Calibration joints visible" done={calibrationJointsVisible} />
-              <StatusChip label="Captured" done={calibration.calibrated} />
-            </div>
+          {/* Exercise calibration sidebar — right */}
+          <div className="w-56 shrink-0">
+            <ExerciseCalibrationPanel />
+          </div>
+        </div>
 
-            <div className="flex items-center gap-3">
-              <button
-                onClick={handleStepAction}
-                disabled={!currentStepReady && currentStep < 2}
-                className={`
-                  px-5 py-2 rounded-lg text-sm font-semibold transition-all
-                  ${!currentStepReady && currentStep < 2
-                    ? 'bg-panel text-gray-500 cursor-not-allowed border border-panel-border'
-                    : 'bg-neon/20 text-neon border border-neon/30 hover:bg-neon/30 hover:shadow-neon'}
-                `}
-              >
-                {currentStep === 2 ? 'Capture Pose' : 'Continue'}
-              </button>
+        <p className="text-xs text-gray-500 italic mb-3">{steps[currentStep].instruction}</p>
+        <div className="flex flex-wrap gap-2 mb-4">
+          <StatusChip label="Camera live" done={cameraLive} />
+          <StatusChip label="Body detected" done={bodyDetected} />
+          <StatusChip label="Calibration joints visible" done={calibrationJointsVisible} />
+          <StatusChip label="Captured" done={calibration.calibrated} />
+        </div>
 
-              <div className="flex gap-2 ml-auto">
-                <button
-                  onClick={handlePrev}
-                  disabled={currentStep === 0}
-                  className="p-2 rounded-lg text-gray-500 hover:text-white hover:bg-white/5 disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
-                >
-                  <ChevronLeft size={18} />
-                </button>
-                <button
-                  onClick={handleNext}
-                  disabled={currentStep === 2}
-                  className="p-2 rounded-lg text-gray-500 hover:text-white hover:bg-white/5 disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
-                >
-                  <ChevronRight size={18} />
-                </button>
-              </div>
-            </div>
+        <div className="flex items-center gap-3">
+          <button
+            onClick={handleStepAction}
+            disabled={!currentStepReady && currentStep < 2}
+            className={`
+              px-5 py-2 rounded-lg text-sm font-semibold transition-all
+              ${!currentStepReady && currentStep < 2
+                ? 'bg-panel text-gray-500 cursor-not-allowed border border-panel-border'
+                : 'bg-neon/20 text-neon border border-neon/30 hover:bg-neon/30 hover:shadow-neon'}
+            `}
+          >
+            {currentStep === 2 ? 'Capture Pose' : 'Continue'}
+          </button>
+
+          <div className="flex gap-2 ml-auto">
+            <button
+              onClick={handlePrev}
+              disabled={currentStep === 0}
+              className="p-2 rounded-lg text-gray-500 hover:text-white hover:bg-white/5 disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
+            >
+              <ChevronLeft size={18} />
+            </button>
+            <button
+              onClick={handleNext}
+              disabled={currentStep === 2}
+              className="p-2 rounded-lg text-gray-500 hover:text-white hover:bg-white/5 disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
+            >
+              <ChevronRight size={18} />
+            </button>
           </div>
         </div>
       </div>

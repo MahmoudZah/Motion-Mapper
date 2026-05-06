@@ -25,6 +25,10 @@ module.exports = {
         test: /\.css$/,
         use: ['style-loader', 'css-loader', 'postcss-loader'],
       },
+      {
+        test: /\.(gif|png|jpe?g|svg|webp)$/i,
+        type: 'asset/resource',
+      },
     ],
   },
   resolve: {
@@ -38,6 +42,9 @@ module.exports = {
   devServer: {
     port: 9000,
     hot: true,
-    static: path.resolve(__dirname, 'dist'),
+    static: [
+      path.resolve(__dirname, 'dist'),
+      { directory: path.resolve(__dirname, 'Assets'), publicPath: '/Assets' },
+    ],
   },
 };

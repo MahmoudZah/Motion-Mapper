@@ -8,6 +8,8 @@ contextBridge.exposeInMainWorld('motionAPI', {
   stopExercise: (name) => ipcRenderer.invoke('stop-exercise', name),
 
   calibrate: () => ipcRenderer.invoke('calibrate'),
+  calibrateExercise: (exercise) => ipcRenderer.invoke('calibrate-exercise', exercise),
+  removeCalibration: (exercise) => ipcRenderer.invoke('remove-calibration', exercise),
   setSensitivity: (value) => ipcRenderer.invoke('set-sensitivity', value),
   setProvider: (provider) => ipcRenderer.invoke('set-provider', provider),
   getCalibration: () => ipcRenderer.invoke('get-calibration'),

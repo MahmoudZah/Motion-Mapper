@@ -2,6 +2,13 @@ import React, { useState } from 'react';
 import { Video, Activity, Dumbbell, CheckCircle2 } from 'lucide-react';
 import PoseCameraViewport from './PoseCameraViewport';
 
+const EXERCISE_GIF_MAP = {
+  squats: '/Assets/bodyweight-squat-2.gif',
+  jumpingJacks: '/Assets/Jump11.gif',
+  rightDumbbellRaise: '/Assets/dumbbell-bicep-curl.gif',
+  leftDumbbellRaise: '/Assets/dumbbell-bicep-curl.gif',
+};
+
 const exerciseRefs = [
   {
     id: 'squats',
@@ -162,12 +169,28 @@ export default function LiveViewPrototype({ isTracking, detections, exerciseStat
           </div>
 
           <div className="flex-1 bg-panel p-4 overflow-y-auto">
-            <div className="rounded-xl border border-neon/15 bg-neon/5 p-4">
-              <p className="text-[10px] uppercase tracking-wider text-gray-500 mb-2">Current phase</p>
-              <p className="text-lg text-white font-display uppercase">{guidance?.phase || 'untracked'}</p>
-              <p className="text-xs text-gray-400 mt-2">
-                {guidance?.summary || 'Move into view so the system can evaluate this exercise.'}
-              </p>
+            <div className="flex gap-4 items-start">
+              {/* Exercise GIF */}
+              <div className="shrink-0 w-[140px] rounded-xl border border-panel-border overflow-hidden bg-black/40">
+                <img
+                  key={selectedExercise}
+                  src={EXERCISE_GIF_MAP[selectedExercise]}
+                  alt={`${refInfo.label} demonstration`}
+                  className="w-full h-auto object-contain"
+                  style={{ imageRendering: 'auto' }}
+                />
+              </div>
+
+              {/* Phase info */}
+              <div className="flex-1 min-w-0">
+                <div className="rounded-xl border border-neon/15 bg-neon/5 p-4">
+                  <p className="text-[10px] uppercase tracking-wider text-gray-500 mb-2">Current phase</p>
+                  <p className="text-lg text-white font-display uppercase">{guidance?.phase || 'untracked'}</p>
+                  <p className="text-xs text-gray-400 mt-2">
+                    {guidance?.summary || 'Move into frame so the joints for this exercise are visible.'}
+                  </p>
+                </div>
+              </div>
             </div>
 
             <div className="mt-4 space-y-2">
