@@ -7,6 +7,7 @@ import LiveView from './components/LiveView';
 import IgnitionButton from './components/IgnitionButton';
 import OverlayView from './components/OverlayView';
 import AlertsOverlay from './components/AlertsOverlay';
+import CameraProvider from './components/CameraProvider';
 
 const api = typeof window !== 'undefined' && window.motionAPI ? window.motionAPI : null;
 const params = typeof window !== 'undefined' ? new URLSearchParams(window.location.search) : null;
@@ -184,47 +185,52 @@ export default function App() {
   if (isOverlay) return <OverlayView />;
   if (isAlertsOverlay) return <AlertsOverlay />;
 
+  const cameraNeeded = activeTab === 'calibration' || activeTab === 'live';
+
   return (
-    <div className="h-screen w-screen flex flex-col bg-panel overflow-hidden">
-      <TitleBar />
+    <CameraProvider active={cameraNeeded}>
+      <div className="h-screen w-screen flex flex-col bg-panel overflow-hidden">
+        <TitleBar />
 
-      <div className="flex flex-1 overflow-hidden">
-        <Sidebar activeTab={activeTab} onTabChange={setActiveTab} isTracking={isTracking} />
+        <div className="flex flex-1 overflow-hidden">
+          <Sidebar activeTab={activeTab} onTabChange={setActiveTab} isTracking={isTracking} />
 
-        <main className="flex-1 flex flex-col overflow-hidden">
-          <div className="flex-1 overflow-y-auto p-6">
-            {activeTab === 'dashboard' && (
-              <Dashboard
-                exerciseState={exerciseState}
-                isTracking={isTracking}
-                onUpdateKey={handleUpdateKey}
-                keypresses={keypresses}
-                detections={detections}
-              />
-            )}
-            {activeTab === 'calibration' && (
-              <CalibrationWizard
-                calibration={calibration}
-                onCalibrate={handleCalibrate}
-                onSensitivity={handleSensitivity}
-                onProvider={handleProvider}
-                poseFrame={poseFrame}
-              />
-            )}
-            {activeTab === 'live' && (
-              <LiveView
-                isTracking={isTracking}
-                detections={detections}
-                exerciseState={exerciseState}
-                poseFrame={poseFrame}
-              />
-            )}
-          </div>
+          <main className="flex-1 flex flex-col overflow-hidden">
+            <div className="flex-1 overflow-y-auto p-6">
+              {activeTab === 'dashboard' && (
+                <Dashboard
+                  exerciseState={exerciseState}
+                  isTracking={isTracking}
+                  onUpdateKey={handleUpdateKey}
+                  keypresses={keypresses}
+                  detections={detections}
+                />
+              )}
+              {activeTab === 'calibration' && (
+                <CalibrationWizard
+                  calibration={calibration}
+                  onCalibrate={handleCalibrate}
+                  onSensitivity={handleSensitivity}
+                  onProvider={handleProvider}
+                  poseFrame={poseFrame}
+                />
+              )}
+              {activeTab === 'live' && (
+                <LiveView
+                  isTracking={isTracking}
+                  detections={detections}
+                  exerciseState={exerciseState}
+                  poseFrame={poseFrame}
+                />
+              )}
+            </div>
 
-          <IgnitionButton isTracking={isTracking} onToggle={handleToggleTracking} />
-        </main>
+            <IgnitionButton isTracking={isTracking} onToggle={handleToggleTracking} />
+          </main>
+        </div>
+
       </div>
-
-    </div>
+    </CameraProvider>
   );
 }
+

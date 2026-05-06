@@ -1,7 +1,6 @@
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useEffect, useRef } from 'react';
 import { Camera, LoaderCircle } from 'lucide-react';
-
-const api = typeof window !== 'undefined' && window.motionAPI ? window.motionAPI : null;
+import { useCameraStream } from './CameraProvider';
 
 const CONNECTIONS = [
   [0, 1], [0, 2], [1, 3], [2, 4],
@@ -14,6 +13,14 @@ const CONNECTIONS = [
   [12, 14], [14, 16],
 ];
 
+/**
+ * PoseCameraViewport – display-only component.
+ *
+ * Camera acquisition, frame sending, and backend preview state are all
+ * managed by the parent CameraProvider.  This component simply attaches
+ * the shared MediaStream to its own <video> element and draws the pose
+ * skeleton overlay.
+ */
 export default function PoseCameraViewport({
   poseFrame,
   badge,
@@ -23,169 +30,18 @@ export default function PoseCameraViewport({
   hud,
 }) {
   const videoRef = useRef(null);
-  const captureCanvasRef = useRef(null);
-  const captureContextRef = useRef(null);
-  const streamRef = useRef(null);
-  const [cameraReady, setCameraReady] = useState(false);
-  const [cameraError, setCameraError] = useState('');
+  const { stream, cameraReady, cameraError } = useCameraStream();
 
+  // Attach the shared MediaStream to this viewport's <video> element
   useEffect(() => {
-    if (!api?.setPreviewActive) return undefined;
-    api.setPreviewActive(true).catch(() => {});
-    return () => {
-      api.setPreviewActive(false).catch(() => {});
+    const video = videoRef.current;
+    if (!video || !stream) return;
+
+    video.srcObject = stream;
+    video.onloadedmetadata = async () => {
+      try { await video.play(); } catch { /* autoplay edge case */ }
     };
-  }, []);
-
-  useEffect(() => {
-    let cancelled = false;
-
-    const MAX_RETRIES = 3;
-    const RETRY_DELAY_MS = 1500;
-
-    async function attemptCameraAccess() {
-      const stream = await navigator.mediaDevices.getUserMedia({
-        audio: false,
-        video: {
-          facingMode: 'user',
-          width: { ideal: 640 },
-          height: { ideal: 360 },
-        },
-      });
-      return stream;
-    }
-
-    async function startCamera() {
-      if (!navigator?.mediaDevices?.getUserMedia) {
-        setCameraError('This environment does not expose webcam access.');
-        return;
-      }
-
-      let lastError = null;
-      for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
-        if (cancelled) return;
-        try {
-          const stream = await attemptCameraAccess();
-          if (cancelled) {
-            stream.getTracks().forEach((track) => track.stop());
-            return;
-          }
-          streamRef.current = stream;
-          const video = videoRef.current;
-          if (video) {
-            video.srcObject = stream;
-            video.onloadedmetadata = async () => {
-              try {
-                await video.play();
-              } catch {
-                // autoplay failures are rare in Electron, but the preview still exists.
-              }
-              if (!cancelled) {
-                setCameraReady(true);
-              }
-            };
-          }
-          return; // success – exit the retry loop
-        } catch (error) {
-          lastError = error;
-          console.warn(`[Camera] Attempt ${attempt}/${MAX_RETRIES} failed:`, error?.message);
-          if (attempt < MAX_RETRIES && !cancelled) {
-            await new Promise((resolve) => setTimeout(resolve, RETRY_DELAY_MS));
-          }
-        }
-      }
-
-      // All retries exhausted
-      if (!cancelled) {
-        setCameraError(
-          lastError?.message || 'Unable to access the camera.'
-        );
-      }
-    }
-
-    startCamera();
-
-    return () => {
-      cancelled = true;
-      setCameraReady(false);
-      const stream = streamRef.current;
-      if (stream) {
-        stream.getTracks().forEach((track) => track.stop());
-        streamRef.current = null;
-      }
-    };
-  }, []);
-
-  useEffect(() => {
-    if (!cameraReady || !api) return undefined;
-    let cancelled = false;
-    let busy = false;
-    let timer = null;
-    const frameDelayMs = 16;
-    const jpegQuality = 0.55;
-
-    const sendFrame = async () => {
-      if (cancelled) return;
-      const video = videoRef.current;
-      const canvas = captureCanvasRef.current;
-      if (!video || !canvas || video.readyState < 2 || busy) {
-        timer = window.setTimeout(sendFrame, frameDelayMs);
-        return;
-      }
-
-      const width = video.videoWidth;
-      const height = video.videoHeight;
-      if (!width || !height) {
-        timer = window.setTimeout(sendFrame, frameDelayMs);
-        return;
-      }
-
-      busy = true;
-      if (canvas.width !== width) {
-        canvas.width = width;
-      }
-      if (canvas.height !== height) {
-        canvas.height = height;
-      }
-      let context = captureContextRef.current;
-      if (!context) {
-        context = canvas.getContext('2d', { willReadFrequently: true });
-        captureContextRef.current = context;
-      }
-      if (!context) {
-        busy = false;
-        timer = window.setTimeout(sendFrame, frameDelayMs);
-        return;
-      }
-      context.drawImage(video, 0, 0, width, height);
-      const image = canvas.toDataURL('image/jpeg', jpegQuality);
-
-      try {
-        await api.processVideoFrame({
-          image,
-          width,
-          height,
-          timestamp: Date.now(),
-        });
-      } catch {
-        // The UI already reflects backend failures via missing overlays.
-      } finally {
-        busy = false;
-        if (!cancelled) {
-          timer = window.setTimeout(sendFrame, frameDelayMs);
-        }
-      }
-    };
-
-    sendFrame();
-
-    return () => {
-      cancelled = true;
-      if (timer) {
-        window.clearTimeout(timer);
-      }
-    };
-  }, [cameraReady]);
+  }, [stream]);
 
   const width = poseFrame?.width || 640;
   const height = poseFrame?.height || 360;
@@ -268,7 +124,6 @@ export default function PoseCameraViewport({
       {badge}
       {hud}
       {footer}
-      <canvas ref={captureCanvasRef} className="hidden" />
       <div className="absolute inset-0 scanline pointer-events-none" />
     </div>
   );
