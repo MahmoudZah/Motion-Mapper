@@ -19,7 +19,7 @@ const CALIBRATION_KEYPOINTS = [5, 6, 11, 12, 13, 14];
 
 const EXERCISE_LABELS = {
   squats: 'Squats',
-  jumpingJacks: 'Jumping Jacks',
+  jumpingJacks: 'Jump',
   rightDumbbellRaise: 'Right Bicep Curl',
   leftDumbbellRaise: 'Left Bicep Curl',
 };
@@ -137,7 +137,6 @@ function ExerciseCalibrationPanel() {
         {Object.entries(EXERCISE_LABELS).map(([key, label]) => {
           const isCalibrated = Boolean(calibrationStatus[key]);
           const isLoading = loading === key;
-          const isHighlighted = key === 'jumpingJacks';
 
           return (
             <div
@@ -145,9 +144,7 @@ function ExerciseCalibrationPanel() {
               className={`rounded-lg border px-3 py-2.5 transition-all ${
                 isCalibrated
                   ? 'border-neon/30 bg-neon/5'
-                  : isHighlighted
-                    ? 'border-amber-500/30 bg-amber-500/5'
-                    : 'border-panel-border bg-panel'
+                  : 'border-panel-border bg-panel'
               }`}
             >
               <div className="flex items-center gap-2 mb-1.5">
@@ -164,11 +161,7 @@ function ExerciseCalibrationPanel() {
                     Locked
                   </span>
                 )}
-                {isHighlighted && !isCalibrated && (
-                  <span className="text-[8px] uppercase tracking-wider text-amber-400/80 bg-amber-500/10 rounded px-1 py-0.5 shrink-0">
-                    Rec
-                  </span>
-                )}
+
               </div>
               <p className="text-[9px] text-gray-500 mb-2 leading-tight">{EXERCISE_HINTS[key]}</p>
               {!isCalibrated ? (

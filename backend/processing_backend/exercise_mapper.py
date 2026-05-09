@@ -36,6 +36,30 @@ class ExerciseState:
     idle_frames: int = 0
 
 
+# ── Zone-based alert state machine ─────────────────────────────────
+# Zone 1 (idle):  neutral standing pose → suppress all alerts
+# Zone 2 (grace): just left idle → 2 s grace, only valid events pass
+# Zone 3 (alert): grace expired without valid exercise → alerts fire
+ZONE_IDLE = 1
+ZONE_GRACE = 2
+ZONE_ALERT = 3
+
+GRACE_PERIOD_MS = 2000        # 2 seconds after leaving idle
+POST_VALID_RETURN_MS = 3000   # 3 seconds after a valid exercise to return to idle
+ALERT_REPEAT_MS = 3000        # repeat alert interval in zone 3
+
+
+@dataclass(slots=True)
+class ZoneState:
+    """Global zone tracking — shared across all exercises."""
+    zone: int = ZONE_IDLE
+    zone_entered_ms: int = 0
+    last_valid_ms: int = 0          # timestamp of last valid exercise
+    last_alert_ms: int = 0          # timestamp of last zone-3 alert
+    returning_to_idle: bool = False  # True during the 3-s post-valid window
+    idle_frames: int = 0
+
+
 @dataclass(slots=True)
 class ExerciseCalibration:
     """Fixed reference captured once during explicit calibration.
@@ -105,6 +129,8 @@ class ExerciseMapper:
         # Per-exercise calibration store.  Keys are exercise names;
         # values are ExerciseCalibration snapshots captured by the user.
         self._calibrations: dict[str, ExerciseCalibration] = {}
+        # Global zone state for the 3-zone alert system
+        self._zone = ZoneState()
 
     # ------------------------------------------------------------------
     # Calibration API
@@ -248,23 +274,50 @@ class ExerciseMapper:
         if not enabled:
             return []
 
-        # ── Idle-pose gate ──────────────────────────────────────────
-        # When the user is in a neutral standing pose (arms at sides,
-        # legs straight, upright trunk) suppress ALL exercise alerts.
-        # We require 5 consecutive idle frames to engage the gate so
-        # a single transitional frame doesn't mute everything.
+        # ── Zone state machine ──────────────────────────────────────
+        z = self._zone
         idle = self._is_idle_pose(pose)
-        idle_state = self.state.get("squats")  # use any state for counter
-        if idle_state is not None:
-            if idle:
-                idle_state.idle_frames = min(idle_state.idle_frames + 1, 30)
+
+        # Count consecutive idle frames (need several to confirm idle)
+        if idle:
+            z.idle_frames = min(z.idle_frames + 1, 30)
+        else:
+            z.idle_frames = 0
+
+        confirmed_idle = z.idle_frames >= 5
+
+        # ── Zone transitions ────────────────────────────────────────
+        if z.zone == ZONE_IDLE:
+            if confirmed_idle:
+                # Stay idle — no alerts
+                return []
             else:
-                idle_state.idle_frames = 0
+                # Just left idle → enter grace period
+                z.zone = ZONE_GRACE
+                z.zone_entered_ms = now
+                z.returning_to_idle = False
 
-        if idle_state is not None and idle_state.idle_frames >= 5:
-            # User is idle — no alerts.
-            return []
+        elif z.zone == ZONE_GRACE:
+            if confirmed_idle:
+                # Returned to idle during grace
+                z.zone = ZONE_IDLE
+                z.zone_entered_ms = now
+                return []
+            # Check if grace period expired
+            if not z.returning_to_idle and (now - z.zone_entered_ms) >= GRACE_PERIOD_MS:
+                # Grace expired — move to alert zone
+                z.zone = ZONE_ALERT
+                z.zone_entered_ms = now
+                z.last_alert_ms = 0  # allow immediate first alert
 
+        elif z.zone == ZONE_ALERT:
+            if confirmed_idle:
+                # Returned to idle
+                z.zone = ZONE_IDLE
+                z.zone_entered_ms = now
+                return []
+
+        # ── Detect exercises ────────────────────────────────────────
         signals: list[ExerciseSignal | None] = []
         squat_signal = self._detect_squat(pose) if "squats" in enabled else None
         if squat_signal is not None:
@@ -290,13 +343,55 @@ class ExerciseMapper:
             if "leftDumbbellRaise" in enabled:
                 signals.append(self._detect_raise(pose, side="left"))
 
+        # ── Filter signals through zone rules ───────────────────────
         events: list[dict[str, Any]] = []
+        has_valid = False
+
         for signal in signals:
             if signal is None:
                 continue
-            event = self._build_event(signal, inference_ms, now)
-            if event is not None:
-                events.append(event)
+
+            if signal.status == "valid":
+                has_valid = True
+                # Valid exercises always pass through
+                event = self._build_event(signal, inference_ms, now)
+                if event is not None:
+                    events.append(event)
+            elif signal.status == "invalid":
+                if z.zone == ZONE_GRACE:
+                    # Suppress invalid alerts during grace period
+                    continue
+                elif z.zone == ZONE_ALERT:
+                    # Only emit alerts at the repeat interval
+                    if (now - z.last_alert_ms) >= ALERT_REPEAT_MS:
+                        event = self._build_event(signal, inference_ms, now)
+                        if event is not None:
+                            events.append(event)
+                            z.last_alert_ms = now
+                else:
+                    # ZONE_IDLE — shouldn't reach here, but just in case
+                    continue
+            else:
+                # Other statuses pass through normally
+                event = self._build_event(signal, inference_ms, now)
+                if event is not None:
+                    events.append(event)
+
+        # ── Post-valid: re-enter grace for return to idle ───────────
+        if has_valid:
+            z.last_valid_ms = now
+            z.zone = ZONE_GRACE
+            z.zone_entered_ms = now
+            z.returning_to_idle = True
+
+        # If in the post-valid return window and time expired, go to alert
+        if z.returning_to_idle and z.zone == ZONE_GRACE:
+            if (now - z.zone_entered_ms) >= POST_VALID_RETURN_MS and not confirmed_idle:
+                z.zone = ZONE_ALERT
+                z.zone_entered_ms = now
+                z.returning_to_idle = False
+                z.last_alert_ms = 0
+
         return events
 
     def _build_event(
@@ -446,7 +541,7 @@ class ExerciseMapper:
         standing_candidate = bool(metrics["standingCandidate"])
         confidence = float(metrics["confidence"])
 
-        if hip_rise >= JUMP_ACTION_HIP_RISE and knee_rise >= JUMP_ACTION_KNEE_RISE:
+        if hip_rise >= JUMP_ACTION_HIP_RISE and knee_rise >= JUMP_ACTION_KNEE_RISE and knee_flex <= JUMP_STANDING_KNEE_FLEX_MAX:
             if not state.armed:
                 state.armed = True
                 state.rep_count += 1
@@ -577,7 +672,8 @@ class ExerciseMapper:
         """Return True when the user is in a neutral standing pose.
 
         Idle = upright trunk, straight legs, both wrists below hips
-        (arms hanging at sides).  This is the "do nothing" position.
+        (arms hanging at sides), AND the body is NOT rising above
+        baseline (which would indicate a jump in progress).
         """
         required = [
             KEYPOINT_INDEX["left_shoulder"],
@@ -634,16 +730,37 @@ class ExerciseMapper:
         if left_arm_angle < 140.0 or right_arm_angle < 140.0:
             return False
 
+        # ── Anti-jump guard ─────────────────────────────────────────
+        # During a jump the user's arms stay at their sides and legs
+        # are straight — superficially identical to idle.  Check the
+        # jump baseline: if hips or knees are significantly ABOVE the
+        # baseline, the user is airborne, NOT idle.
+        jump_state = self.state.get("jumpingJacks")
+        if jump_state is not None:
+            torso_len = mean_or_none([
+                distance(left_shoulder, left_hip),
+                distance(right_shoulder, right_hip),
+            ])
+            if torso_len is not None and torso_len > 1e-6:
+                knee_mid = midpoint(left_knee, right_knee)
+                if jump_state.baseline_hip_y is not None:
+                    hip_rise = (jump_state.baseline_hip_y - float(hip_mid[1])) / torso_len
+                    if hip_rise >= JUMP_ACTION_HIP_RISE:
+                        return False
+                if jump_state.baseline_knee_y is not None:
+                    knee_rise = (jump_state.baseline_knee_y - float(knee_mid[1])) / torso_len
+                    if knee_rise >= JUMP_ACTION_KNEE_RISE:
+                        return False
+
         return True
 
     def _summarize_idle(self, pose: PersonPose | None) -> dict[str, Any]:
         """Return idle-pose status for the guidance HUD."""
         if pose is None:
-            return {"detected": False, "active": False}
+            return {"detected": False, "active": False, "zone": self._zone.zone}
         idle = self._is_idle_pose(pose)
-        idle_state = self.state.get("squats")
-        active = idle_state is not None and idle_state.idle_frames >= 5
-        return {"detected": idle, "active": active}
+        active = self._zone.zone == ZONE_IDLE and self._zone.idle_frames >= 5
+        return {"detected": idle, "active": active, "zone": self._zone.zone}
 
     def _confidence_for(self, pose: PersonPose, indices: list[int]) -> float:
         values = [float(pose.scores[index]) for index in indices]
