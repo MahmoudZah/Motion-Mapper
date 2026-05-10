@@ -12,6 +12,8 @@ DEFAULT_EXERCISE_KEYS = {
     "jumpingJacks": "W",
     "rightDumbbellRaise": "D",
     "leftDumbbellRaise": "A",
+    "rightLateralRaise": "E",
+    "leftLateralRaise": "Q",
 }
 
 

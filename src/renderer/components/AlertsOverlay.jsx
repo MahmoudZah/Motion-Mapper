@@ -6,8 +6,10 @@ const api = typeof window !== 'undefined' && window.motionAPI ? window.motionAPI
 const EXERCISE_LABELS = {
   squats: 'Squats',
   jumpingJacks: 'Jump',
-  rightDumbbellRaise: 'Right Curl',
-  leftDumbbellRaise: 'Left Curl',
+  rightDumbbellRaise: 'Right Bicep Curl',
+  leftDumbbellRaise: 'Left Bicep Curl',
+  rightLateralRaise: 'Right Lateral Raise',
+  leftLateralRaise: 'Left Lateral Raise',
 };
 
 function formatTime(ts) {

@@ -14,8 +14,10 @@ Local Python backend for Motion Mapper.
 
 - `squats`
 - `jumpingJacks`
-- `rightDumbbellRaise`
-- `leftDumbbellRaise`
+- `rightDumbbellRaise` (right bicep curl)
+- `leftDumbbellRaise` (left bicep curl)
+- `rightLateralRaise` (right lateral raise)
+- `leftLateralRaise` (left lateral raise)
 
 ## Install
 

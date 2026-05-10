@@ -6,6 +6,8 @@ const EXERCISE_LABELS = {
   jumpingJacks: 'Jump',
   rightDumbbellRaise: 'Right Bicep Curl',
   leftDumbbellRaise: 'Left Bicep Curl',
+  rightLateralRaise: 'Right Lateral Raise',
+  leftLateralRaise: 'Left Lateral Raise',
 };
 
 const FILTERS = [

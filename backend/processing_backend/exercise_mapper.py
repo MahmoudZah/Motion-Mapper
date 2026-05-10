@@ -34,6 +34,12 @@ class ExerciseState:
     baseline_ankle_span: float | None = None
     standing_frames: int = 0
     idle_frames: int = 0
+    raise_prev_abduction: float | None = None
+    raise_prev_opposite_lean: float | None = None
+    raise_peak_abduction: float = 0.0
+    raise_baseline_head_shoulder_dist: float | None = None
+    raise_invalidated: bool = False
+    raise_peak_reached: bool = False
 
 
 # ── Zone-based alert state machine ─────────────────────────────────
@@ -111,6 +117,12 @@ BICEP_CURL_RESET_MIN_ANGLE = 145.0
 BICEP_CURL_ELBOW_TUCK_MAX = 0.3
 BICEP_CURL_WRIST_TRIGGER_HEIGHT = -0.35
 BICEP_CURL_WRIST_RESET_HEIGHT = -0.6
+LATERAL_RAISE_START_MAX = 15.0
+LATERAL_RAISE_VALID_MIN = 75.0
+LATERAL_RAISE_VALID_MAX = 100.0
+LATERAL_RAISE_ELBOW_MIN = 140.0
+LATERAL_RAISE_TORSO_LEAN_MAX = 10.0
+LATERAL_RAISE_SHRUG_DROP_RATIO = 0.15
 
 SQUAT_TABLE_MEDIUM = {
     "quarter": {"knee": 45.0, "knee_sd": 0.0, "hip": 55.0, "hip_sd": 6.0, "trunk": 68.0, "trunk_sd": 4.0},
@@ -252,6 +264,8 @@ class ExerciseMapper:
             "jumpingJacks": self._summarize_jumping_jack(pose),
             "rightDumbbellRaise": self._summarize_raise(pose, side="right"),
             "leftDumbbellRaise": self._summarize_raise(pose, side="left"),
+            "rightLateralRaise": self._summarize_lateral_raise(pose, side="right"),
+            "leftLateralRaise": self._summarize_lateral_raise(pose, side="left"),
         }
 
     def evaluate(
@@ -342,6 +356,10 @@ class ExerciseMapper:
                 signals.append(self._detect_raise(pose, side="right"))
             if "leftDumbbellRaise" in enabled:
                 signals.append(self._detect_raise(pose, side="left"))
+            if "rightLateralRaise" in enabled:
+                signals.append(self._detect_lateral_raise(pose, side="right"))
+            if "leftLateralRaise" in enabled:
+                signals.append(self._detect_lateral_raise(pose, side="left"))
 
         # ── Filter signals through zone rules ───────────────────────
         events: list[dict[str, Any]] = []
@@ -588,7 +606,6 @@ class ExerciseMapper:
         shoulder_point = point(pose.keypoints, shoulder)
         elbow_point = point(pose.keypoints, elbow)
         wrist_point = point(pose.keypoints, wrist)
-        hip_point = point(pose.keypoints, hip)
         shoulder_width = distance(
             point(pose.keypoints, KEYPOINT_INDEX["left_shoulder"]),
             point(pose.keypoints, KEYPOINT_INDEX["right_shoulder"]),
@@ -661,6 +678,224 @@ class ExerciseMapper:
                 phase="curled",
                 rep_count=state.rep_count,
                 metrics={"elbowTuck": elbow_tuck, "wristHeight": wrist_height, "elbowHeight": elbow_height},
+            )
+
+        return None
+
+    def _detect_lateral_raise(self, pose: PersonPose, side: str) -> ExerciseSignal | None:
+        is_right = side == "right"
+        shoulder = KEYPOINT_INDEX[f"{side}_shoulder"]
+        elbow = KEYPOINT_INDEX[f"{side}_elbow"]
+        wrist = KEYPOINT_INDEX[f"{side}_wrist"]
+        hip = KEYPOINT_INDEX[f"{side}_hip"]
+        opposite_shoulder = KEYPOINT_INDEX["left_shoulder" if is_right else "right_shoulder"]
+        opposite_hip = KEYPOINT_INDEX["left_hip" if is_right else "right_hip"]
+        side_ear = KEYPOINT_INDEX[f"{side}_ear"]
+        nose = KEYPOINT_INDEX["nose"]
+
+        required = [shoulder, elbow, wrist, hip, opposite_shoulder, opposite_hip]
+        if not self._has_confidence(pose, required):
+            return None
+
+        shoulder_point = point(pose.keypoints, shoulder)
+        elbow_point = point(pose.keypoints, elbow)
+        wrist_point = point(pose.keypoints, wrist)
+        hip_point = point(pose.keypoints, hip)
+        opposite_shoulder_point = point(pose.keypoints, opposite_shoulder)
+        opposite_hip_point = point(pose.keypoints, opposite_hip)
+        shoulder_mid = midpoint(shoulder_point, opposite_shoulder_point)
+        hip_mid = midpoint(hip_point, opposite_hip_point)
+        torso_vec = shoulder_mid - hip_mid
+        if abs(float(torso_vec[1])) <= 1e-6:
+            return None
+
+        shoulder_abduction = angle_degrees(hip_point, shoulder_point, elbow_point)
+        elbow_angle = angle_degrees(shoulder_point, elbow_point, wrist_point)
+        trunk_angle = segment_angle_from_horizontal(hip_mid, shoulder_mid)
+        torso_lean_abs = abs(90.0 - trunk_angle)
+        torso_lean_signed = float(np.degrees(np.arctan2(float(torso_vec[0]), abs(float(torso_vec[1])))))
+        opposite_lean = -torso_lean_signed if is_right else torso_lean_signed
+
+        head_index = side_ear if pose.scores[side_ear] >= self.config.min_joint_confidence else nose
+        if pose.scores[head_index] < self.config.min_joint_confidence:
+            return None
+        head_point = point(pose.keypoints, head_index)
+        head_shoulder_dist = abs(float(shoulder_point[1]) - float(head_point[1]))
+
+        exercise_name = "rightLateralRaise" if is_right else "leftLateralRaise"
+        state = self.state[exercise_name]
+        side_label = "Right" if is_right else "Left"
+
+        if shoulder_abduction <= LATERAL_RAISE_START_MAX:
+            state.raise_prev_abduction = shoulder_abduction
+            state.raise_prev_opposite_lean = max(0.0, opposite_lean)
+            state.raise_peak_abduction = 0.0
+            state.raise_invalidated = False
+            state.raise_peak_reached = False
+            state.armed = False
+            state.raise_baseline_head_shoulder_dist = self._ema(
+                state.raise_baseline_head_shoulder_dist,
+                head_shoulder_dist,
+            )
+            return None
+
+        if not state.armed and shoulder_abduction > LATERAL_RAISE_START_MAX:
+            state.armed = True
+            state.raise_prev_abduction = shoulder_abduction
+            state.raise_prev_opposite_lean = max(0.0, opposite_lean)
+            state.raise_peak_abduction = shoulder_abduction
+            state.raise_invalidated = False
+            state.raise_peak_reached = False
+
+        state.raise_peak_abduction = max(state.raise_peak_abduction, shoulder_abduction)
+
+        if opposite_lean > LATERAL_RAISE_TORSO_LEAN_MAX:
+            state.raise_invalidated = True
+            return ExerciseSignal(
+                exercise=exercise_name,
+                status="invalid",
+                message=f"{side_label} lateral raise: avoid torso leaning (>{LATERAL_RAISE_TORSO_LEAN_MAX:.0f} deg)",
+                angle=shoulder_abduction,
+                confidence=self._confidence_for(pose, [shoulder, elbow, wrist, hip]),
+                phase=self._raise_phase_label(shoulder_abduction),
+                rep_count=state.rep_count,
+                metrics=self._raise_event_metrics(
+                    shoulder_abduction,
+                    elbow_angle,
+                    torso_lean_abs,
+                    opposite_lean,
+                    head_shoulder_dist,
+                    state.raise_baseline_head_shoulder_dist,
+                ),
+            )
+
+        if elbow_angle < LATERAL_RAISE_ELBOW_MIN and shoulder_abduction > LATERAL_RAISE_START_MAX:
+            state.raise_invalidated = True
+            return ExerciseSignal(
+                exercise=exercise_name,
+                status="invalid",
+                message=f"{side_label} lateral raise: keep elbow angle >= {LATERAL_RAISE_ELBOW_MIN:.0f} deg",
+                angle=elbow_angle,
+                confidence=self._confidence_for(pose, [shoulder, elbow, wrist, hip]),
+                phase=self._raise_phase_label(shoulder_abduction),
+                rep_count=state.rep_count,
+                metrics=self._raise_event_metrics(
+                    shoulder_abduction,
+                    elbow_angle,
+                    torso_lean_abs,
+                    opposite_lean,
+                    head_shoulder_dist,
+                    state.raise_baseline_head_shoulder_dist,
+                ),
+            )
+
+        baseline = state.raise_baseline_head_shoulder_dist
+        if (
+            baseline is not None
+            and baseline > 1e-6
+            and 45.0 <= shoulder_abduction <= LATERAL_RAISE_VALID_MAX
+            and head_shoulder_dist < baseline * (1.0 - LATERAL_RAISE_SHRUG_DROP_RATIO)
+        ):
+            state.raise_invalidated = True
+            return ExerciseSignal(
+                exercise=exercise_name,
+                status="invalid",
+                message=f"{side_label} lateral raise: avoid shrugging the shoulder",
+                angle=shoulder_abduction,
+                confidence=self._confidence_for(pose, [shoulder, elbow, wrist, hip, head_index]),
+                phase=self._raise_phase_label(shoulder_abduction),
+                rep_count=state.rep_count,
+                metrics=self._raise_event_metrics(
+                    shoulder_abduction,
+                    elbow_angle,
+                    torso_lean_abs,
+                    opposite_lean,
+                    head_shoulder_dist,
+                    baseline,
+                ),
+            )
+
+        prev_abduction = state.raise_prev_abduction
+        prev_opposite_lean = state.raise_prev_opposite_lean
+        if prev_abduction is not None and prev_opposite_lean is not None:
+            delta_abduction = shoulder_abduction - prev_abduction
+            delta_opposite_lean = max(0.0, opposite_lean) - prev_opposite_lean
+            if (
+                30.0 <= shoulder_abduction <= LATERAL_RAISE_VALID_MIN
+                and delta_abduction > 2.0
+                and delta_opposite_lean > 1.5
+                and opposite_lean > 6.0
+            ):
+                state.raise_invalidated = True
+                return ExerciseSignal(
+                    exercise=exercise_name,
+                    status="invalid",
+                    message=f"{side_label} lateral raise: control mid-range, no momentum lean",
+                    angle=shoulder_abduction,
+                    confidence=self._confidence_for(pose, [shoulder, elbow, wrist, hip]),
+                    phase="mid-range",
+                    rep_count=state.rep_count,
+                    metrics=self._raise_event_metrics(
+                        shoulder_abduction,
+                        elbow_angle,
+                        torso_lean_abs,
+                        opposite_lean,
+                        head_shoulder_dist,
+                        baseline,
+                    ),
+                )
+
+        state.raise_prev_abduction = shoulder_abduction
+        state.raise_prev_opposite_lean = max(0.0, opposite_lean)
+
+        if (
+            state.armed
+            and not state.raise_peak_reached
+            and not state.raise_invalidated
+            and LATERAL_RAISE_VALID_MIN <= shoulder_abduction <= LATERAL_RAISE_VALID_MAX
+            and elbow_angle >= LATERAL_RAISE_ELBOW_MIN
+        ):
+            state.raise_peak_reached = True
+            state.rep_count += 1
+            return ExerciseSignal(
+                exercise=exercise_name,
+                status="valid",
+                message=f"{side_label} lateral raise: rep counted at {int(round(shoulder_abduction))} deg",
+                angle=shoulder_abduction,
+                confidence=self._confidence_for(pose, [shoulder, elbow, wrist, hip]),
+                phase="top",
+                rep_count=state.rep_count,
+                metrics=self._raise_event_metrics(
+                    shoulder_abduction,
+                    elbow_angle,
+                    torso_lean_abs,
+                    opposite_lean,
+                    head_shoulder_dist,
+                    baseline,
+                ),
+            )
+
+        if state.armed and not state.raise_peak_reached and shoulder_abduction < 30.0 and state.raise_peak_abduction > 30.0:
+            peak_angle = state.raise_peak_abduction
+            state.raise_invalidated = False
+            state.raise_peak_abduction = 0.0
+            state.armed = False
+            return ExerciseSignal(
+                exercise=exercise_name,
+                status="invalid",
+                message=f"{side_label} lateral raise: half rep (peak must reach {LATERAL_RAISE_VALID_MIN:.0f} deg)",
+                angle=peak_angle,
+                confidence=self._confidence_for(pose, [shoulder, elbow, wrist, hip]),
+                phase="reset",
+                rep_count=state.rep_count,
+                metrics=self._raise_event_metrics(
+                    shoulder_abduction,
+                    elbow_angle,
+                    torso_lean_abs,
+                    opposite_lean,
+                    head_shoulder_dist,
+                    baseline,
+                ),
             )
 
         return None
@@ -1227,7 +1462,6 @@ class ExerciseMapper:
         shoulder_point = point(pose.keypoints, shoulder)
         elbow_point = point(pose.keypoints, elbow)
         wrist_point = point(pose.keypoints, wrist)
-        hip_point = point(pose.keypoints, hip)
         shoulder_width = distance(
             point(pose.keypoints, KEYPOINT_INDEX["left_shoulder"]),
             point(pose.keypoints, KEYPOINT_INDEX["right_shoulder"]),
@@ -1270,6 +1504,136 @@ class ExerciseMapper:
                 formatter=self._format_metric_value,
             ),
         }
+
+    def _summarize_lateral_raise(self, pose: PersonPose | None, side: str) -> dict[str, Any]:
+        shoulder = KEYPOINT_INDEX[f"{side}_shoulder"]
+        elbow = KEYPOINT_INDEX[f"{side}_elbow"]
+        wrist = KEYPOINT_INDEX[f"{side}_wrist"]
+        hip = KEYPOINT_INDEX[f"{side}_hip"]
+        is_right = side == "right"
+        opposite_shoulder = KEYPOINT_INDEX["left_shoulder" if is_right else "right_shoulder"]
+        opposite_hip = KEYPOINT_INDEX["left_hip" if is_right else "right_hip"]
+        side_ear = KEYPOINT_INDEX[f"{side}_ear"]
+        nose = KEYPOINT_INDEX["nose"]
+        label = "Right Lateral Raise" if is_right else "Left Lateral Raise"
+
+        if pose is None or not self._has_confidence(pose, [shoulder, elbow, wrist, hip, opposite_shoulder, opposite_hip]):
+            return self._empty_guidance(
+                label,
+                [
+                    ("start", "Start with arm by your side", False, None, f"abduction <= {LATERAL_RAISE_START_MAX:.0f} deg"),
+                    ("mid", "Control mid-range lift", False, None, "30-75 deg without torso lean"),
+                    ("top", "Reach top with straight arm", False, None, f"abduction {LATERAL_RAISE_VALID_MIN:.0f}-{LATERAL_RAISE_VALID_MAX:.0f} deg"),
+                ],
+            )
+
+        shoulder_point = point(pose.keypoints, shoulder)
+        elbow_point = point(pose.keypoints, elbow)
+        wrist_point = point(pose.keypoints, wrist)
+        hip_point = point(pose.keypoints, hip)
+        opposite_shoulder_point = point(pose.keypoints, opposite_shoulder)
+        opposite_hip_point = point(pose.keypoints, opposite_hip)
+        shoulder_mid = midpoint(shoulder_point, opposite_shoulder_point)
+        hip_mid = midpoint(hip_point, opposite_hip_point)
+        trunk_angle = segment_angle_from_horizontal(hip_mid, shoulder_mid)
+        torso_lean_abs = abs(90.0 - trunk_angle)
+        torso_vec = shoulder_mid - hip_mid
+        torso_lean_signed = float(np.degrees(np.arctan2(float(torso_vec[0]), max(abs(float(torso_vec[1])), 1e-6))))
+        opposite_lean = -torso_lean_signed if is_right else torso_lean_signed
+        shoulder_abduction = angle_degrees(hip_point, shoulder_point, elbow_point)
+        elbow_angle = angle_degrees(shoulder_point, elbow_point, wrist_point)
+        head_index = side_ear if pose.scores[side_ear] >= self.config.min_joint_confidence else nose
+        baseline = self.state["rightLateralRaise" if is_right else "leftLateralRaise"].raise_baseline_head_shoulder_dist
+        head_shoulder_dist = None
+        shrug_ratio = None
+        if pose.scores[head_index] >= self.config.min_joint_confidence:
+            head_shoulder_dist = abs(float(shoulder_point[1]) - float(point(pose.keypoints, head_index)[1]))
+            if baseline is not None and baseline > 1e-6:
+                shrug_ratio = max(0.0, (baseline - head_shoulder_dist) / baseline)
+
+        phase = self._raise_phase_label(shoulder_abduction)
+        if shoulder_abduction <= LATERAL_RAISE_START_MAX:
+            phase = "reset"
+
+        return {
+            "label": label,
+            "tracked": True,
+            "phase": phase,
+            "summary": (
+                "Lift in the frontal plane to shoulder level (75-100 deg), keep elbow >= 140 deg, "
+                "avoid opposite-side trunk lean > 10 deg, and avoid shrugging."
+            ),
+            "metrics": {
+                "abductionAngle": round(shoulder_abduction, 1),
+                "elbowAngle": round(elbow_angle, 1),
+                "torsoLeanDeg": round(torso_lean_abs, 1),
+                "oppositeLeanDeg": round(max(0.0, opposite_lean), 1),
+                "shrugRatio": round(float(shrug_ratio), 3) if shrug_ratio is not None else None,
+            },
+            "steps": self._build_steps(
+                [
+                    (
+                        "start",
+                        "Start with arm by your side",
+                        shoulder_abduction <= LATERAL_RAISE_START_MAX,
+                        shoulder_abduction,
+                        f"abduction <= {LATERAL_RAISE_START_MAX:.0f} deg",
+                    ),
+                    (
+                        "mid",
+                        "Control mid-range lift",
+                        30.0 <= shoulder_abduction <= LATERAL_RAISE_VALID_MIN and max(0.0, opposite_lean) <= LATERAL_RAISE_TORSO_LEAN_MAX,
+                        max(0.0, opposite_lean),
+                        f"opposite lean <= {LATERAL_RAISE_TORSO_LEAN_MAX:.0f} deg",
+                    ),
+                    (
+                        "top",
+                        "Reach top with straight arm",
+                        (
+                            LATERAL_RAISE_VALID_MIN <= shoulder_abduction <= LATERAL_RAISE_VALID_MAX
+                            and elbow_angle >= LATERAL_RAISE_ELBOW_MIN
+                        ),
+                        shoulder_abduction,
+                        (
+                            f"abduction {LATERAL_RAISE_VALID_MIN:.0f}-{LATERAL_RAISE_VALID_MAX:.0f} deg, "
+                            f"elbow >= {LATERAL_RAISE_ELBOW_MIN:.0f} deg"
+                        ),
+                    ),
+                ],
+                formatter=self._format_metric_value,
+            ),
+        }
+
+    def _raise_phase_label(self, shoulder_abduction: float) -> str:
+        if shoulder_abduction <= LATERAL_RAISE_START_MAX:
+            return "start"
+        if shoulder_abduction < 30.0:
+            return "phase1"
+        if shoulder_abduction < LATERAL_RAISE_VALID_MIN:
+            return "mid-range"
+        if shoulder_abduction <= LATERAL_RAISE_VALID_MAX:
+            return "top"
+        return "above-target"
+
+    def _raise_event_metrics(
+        self,
+        shoulder_abduction: float,
+        elbow_angle: float,
+        torso_lean_abs: float,
+        opposite_lean: float,
+        head_shoulder_dist: float,
+        baseline_head_shoulder_dist: float | None,
+    ) -> dict[str, float]:
+        values: dict[str, float] = {
+            "abductionAngle": shoulder_abduction,
+            "elbowAngle": elbow_angle,
+            "torsoLeanDeg": torso_lean_abs,
+            "oppositeLeanDeg": max(0.0, opposite_lean),
+            "headShoulderDist": head_shoulder_dist,
+        }
+        if baseline_head_shoulder_dist is not None and baseline_head_shoulder_dist > 1e-6:
+            values["shrugRatio"] = max(0.0, (baseline_head_shoulder_dist - head_shoulder_dist) / baseline_head_shoulder_dist)
+        return values
 
     def _empty_guidance(
         self,

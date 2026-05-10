@@ -7,6 +7,8 @@ const EXERCISE_GIF_MAP = {
   jumpingJacks: '/Assets/Jump11.gif',
   rightDumbbellRaise: '/Assets/dumbbell-bicep-curl.gif',
   leftDumbbellRaise: '/Assets/dumbbell-bicep-curl.gif',
+  rightLateralRaise: '/Assets/dumbbell-lateral-raise.gif',
+  leftLateralRaise: '/Assets/dumbbell-lateral-raise.gif',
 };
 
 const exerciseRefs = [
@@ -29,6 +31,16 @@ const exerciseRefs = [
     id: 'leftDumbbellRaise',
     label: 'Left Bicep Curl',
     tips: ['Mirror the right arm', 'Keep the elbow close to your side', 'Lower under control', 'Stand tall through the torso'],
+  },
+  {
+    id: 'rightLateralRaise',
+    label: 'Right Lateral Raise',
+    tips: ['Raise to shoulder level (75-100 deg)', 'Keep elbow mostly straight (>= 140 deg)', 'Avoid opposite-side lean > 10 deg', 'Do not shrug toward the ear'],
+  },
+  {
+    id: 'leftLateralRaise',
+    label: 'Left Lateral Raise',
+    tips: ['Raise to shoulder level (75-100 deg)', 'Keep elbow mostly straight (>= 140 deg)', 'Avoid opposite-side lean > 10 deg', 'Do not shrug toward the ear'],
   },
 ];
 

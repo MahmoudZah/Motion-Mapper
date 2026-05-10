@@ -7,6 +7,8 @@ const exercises = [
   { id: 'jumpingJacks', label: 'Jump', defaultKey: 'W' },
   { id: 'rightDumbbellRaise', label: 'Right Bicep Curl', defaultKey: 'D' },
   { id: 'leftDumbbellRaise', label: 'Left Bicep Curl', defaultKey: 'A' },
+  { id: 'rightLateralRaise', label: 'Right Lateral Raise', defaultKey: 'E' },
+  { id: 'leftLateralRaise', label: 'Left Lateral Raise', defaultKey: 'Q' },
 ];
 
 export default function Dashboard({ exerciseState, isTracking, onUpdateKey, keypresses, detections }) {

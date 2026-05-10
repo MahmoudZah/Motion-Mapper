@@ -52,6 +52,8 @@ const exerciseState = {
   jumpingJacks: { key: 'W', active: false, lastDetection: null },
   rightDumbbellRaise: { key: 'D', active: false, lastDetection: null },
   leftDumbbellRaise: { key: 'A', active: false, lastDetection: null },
+  rightLateralRaise: { key: 'E', active: false, lastDetection: null },
+  leftLateralRaise: { key: 'Q', active: false, lastDetection: null },
 };
 
 let calibrationData = {
@@ -72,7 +74,7 @@ function getPythonLaunchSpec() {
   }
 
   if (process.platform === 'win32') {
-    return { command: 'py', args: ['-3.13'] };
+    return { command: 'py', args: []};
   }
 
   return { command: 'python3', args: [] };
@@ -596,6 +598,8 @@ const mockExerciseData = [
   { exercise: 'rightDumbbellRaise', status: 'invalid', message: 'Right arm: keep the elbow tucked by your side', angle: 108 },
   { exercise: 'leftDumbbellRaise', status: 'valid', message: 'Left curl: angle 79 deg', angle: 79 },
   { exercise: 'leftDumbbellRaise', status: 'invalid', message: 'Left arm: curl higher toward the shoulder', angle: 118 },
+  { exercise: 'rightLateralRaise', status: 'valid', message: 'Right lateral raise: rep counted at 86 deg', angle: 86 },
+  { exercise: 'leftLateralRaise', status: 'invalid', message: 'Left lateral raise: avoid shrugging the shoulder', angle: 82 },
   { exercise: 'squats', status: 'valid', message: 'Squat Detected: Valid', angle: 95 },
   { exercise: 'jumpingJacks', status: 'invalid', message: 'Stand tall to reset before the next jump', angle: 42 },
 ];

@@ -22,6 +22,8 @@ const EXERCISE_LABELS = {
   jumpingJacks: 'Jump',
   rightDumbbellRaise: 'Right Bicep Curl',
   leftDumbbellRaise: 'Left Bicep Curl',
+  rightLateralRaise: 'Right Lateral Raise',
+  leftLateralRaise: 'Left Lateral Raise',
 };
 
 const EXERCISE_HINTS = {
@@ -29,6 +31,8 @@ const EXERCISE_HINTS = {
   jumpingJacks: 'Prevents squat recovery from triggering false jumps.',
   rightDumbbellRaise: 'Locks neutral arm position for right curl detection.',
   leftDumbbellRaise: 'Locks neutral arm position for left curl detection.',
+  rightLateralRaise: 'Captures neutral shoulder-ear spacing and start posture for right lateral raise.',
+  leftLateralRaise: 'Captures neutral shoulder-ear spacing and start posture for left lateral raise.',
 };
 
 const steps = [

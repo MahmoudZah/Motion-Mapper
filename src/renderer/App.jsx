@@ -53,6 +53,8 @@ export default function App() {
     jumpingJacks: { key: 'W', active: false, lastDetection: null },
     rightDumbbellRaise: { key: 'D', active: false, lastDetection: null },
     leftDumbbellRaise: { key: 'A', active: false, lastDetection: null },
+    rightLateralRaise: { key: 'E', active: false, lastDetection: null },
+    leftLateralRaise: { key: 'Q', active: false, lastDetection: null },
   });
   const [calibration, setCalibration] = useState({
     calibrated: false,
