@@ -120,7 +120,7 @@ BICEP_CURL_WRIST_RESET_HEIGHT = -0.6
 LATERAL_RAISE_START_MAX = 15.0
 LATERAL_RAISE_VALID_MIN = 75.0
 LATERAL_RAISE_VALID_MAX = 100.0
-LATERAL_RAISE_ELBOW_MIN = 140.0
+LATERAL_RAISE_ELBOW_MIN = 130.0
 LATERAL_RAISE_TORSO_LEAN_MAX = 10.0
 LATERAL_RAISE_SHRUG_DROP_RATIO = 0.15
 
@@ -726,7 +726,7 @@ class ExerciseMapper:
         state = self.state[exercise_name]
         side_label = "Right" if is_right else "Left"
 
-        if shoulder_abduction <= LATERAL_RAISE_START_MAX:
+        if shoulder_abduction < 75.0:
             state.raise_prev_abduction = shoulder_abduction
             state.raise_prev_opposite_lean = max(0.0, opposite_lean)
             state.raise_peak_abduction = 0.0
@@ -739,7 +739,7 @@ class ExerciseMapper:
             )
             return None
 
-        if not state.armed and shoulder_abduction > LATERAL_RAISE_START_MAX:
+        if not state.armed and shoulder_abduction >= 75.0:
             state.armed = True
             state.raise_prev_abduction = shoulder_abduction
             state.raise_prev_opposite_lean = max(0.0, opposite_lean)
@@ -748,6 +748,52 @@ class ExerciseMapper:
             state.raise_peak_reached = False
 
         state.raise_peak_abduction = max(state.raise_peak_abduction, shoulder_abduction)
+
+        if (
+            state.armed
+            and not state.raise_peak_reached
+            and LATERAL_RAISE_VALID_MIN <= shoulder_abduction <= LATERAL_RAISE_VALID_MAX
+        ):
+            # ── Elbow gate: reject the rep if elbow is too bent ──
+            if elbow_angle < LATERAL_RAISE_ELBOW_MIN:
+                state.raise_invalidated = True
+                return ExerciseSignal(
+                    exercise=exercise_name,
+                    status="invalid",
+                    message=f"{side_label} lateral raise: keep elbow angle >= {LATERAL_RAISE_ELBOW_MIN:.0f} deg",
+                    angle=elbow_angle,
+                    confidence=self._confidence_for(pose, [shoulder, elbow, wrist, hip]),
+                    phase=self._raise_phase_label(shoulder_abduction),
+                    rep_count=state.rep_count,
+                    metrics=self._raise_event_metrics(
+                        shoulder_abduction,
+                        elbow_angle,
+                        torso_lean_abs,
+                        opposite_lean,
+                        head_shoulder_dist,
+                        state.raise_baseline_head_shoulder_dist,
+                    ),
+                )
+
+            state.raise_peak_reached = True
+            state.rep_count += 1
+            return ExerciseSignal(
+                exercise=exercise_name,
+                status="valid",
+                message=f"{side_label} lateral raise: rep counted at {int(round(shoulder_abduction))} deg",
+                angle=shoulder_abduction,
+                confidence=self._confidence_for(pose, [shoulder, elbow, wrist, hip]),
+                phase="top",
+                rep_count=state.rep_count,
+                metrics=self._raise_event_metrics(
+                    shoulder_abduction,
+                    elbow_angle,
+                    torso_lean_abs,
+                    opposite_lean,
+                    head_shoulder_dist,
+                    state.raise_baseline_head_shoulder_dist,
+                ),
+            )
 
         if opposite_lean > LATERAL_RAISE_TORSO_LEAN_MAX:
             state.raise_invalidated = True
@@ -769,7 +815,7 @@ class ExerciseMapper:
                 ),
             )
 
-        if elbow_angle < LATERAL_RAISE_ELBOW_MIN and shoulder_abduction > LATERAL_RAISE_START_MAX:
+        if elbow_angle < LATERAL_RAISE_ELBOW_MIN and shoulder_abduction >= 75.0:
             state.raise_invalidated = True
             return ExerciseSignal(
                 exercise=exercise_name,
@@ -848,32 +894,7 @@ class ExerciseMapper:
         state.raise_prev_abduction = shoulder_abduction
         state.raise_prev_opposite_lean = max(0.0, opposite_lean)
 
-        if (
-            state.armed
-            and not state.raise_peak_reached
-            and not state.raise_invalidated
-            and LATERAL_RAISE_VALID_MIN <= shoulder_abduction <= LATERAL_RAISE_VALID_MAX
-            and elbow_angle >= LATERAL_RAISE_ELBOW_MIN
-        ):
-            state.raise_peak_reached = True
-            state.rep_count += 1
-            return ExerciseSignal(
-                exercise=exercise_name,
-                status="valid",
-                message=f"{side_label} lateral raise: rep counted at {int(round(shoulder_abduction))} deg",
-                angle=shoulder_abduction,
-                confidence=self._confidence_for(pose, [shoulder, elbow, wrist, hip]),
-                phase="top",
-                rep_count=state.rep_count,
-                metrics=self._raise_event_metrics(
-                    shoulder_abduction,
-                    elbow_angle,
-                    torso_lean_abs,
-                    opposite_lean,
-                    head_shoulder_dist,
-                    baseline,
-                ),
-            )
+
 
         if state.armed and not state.raise_peak_reached and shoulder_abduction < 30.0 and state.raise_peak_abduction > 30.0:
             peak_angle = state.raise_peak_abduction

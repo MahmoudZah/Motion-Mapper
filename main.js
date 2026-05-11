@@ -48,12 +48,12 @@ const BACKEND_ROOT = path.join(__dirname, 'backend');
 const BACKEND_ENTRY = path.join(BACKEND_ROOT, 'main.py');
 
 const exerciseState = {
-  squats: { key: 'Space', active: false, lastDetection: null },
-  jumpingJacks: { key: 'W', active: false, lastDetection: null },
-  rightDumbbellRaise: { key: 'D', active: false, lastDetection: null },
-  leftDumbbellRaise: { key: 'A', active: false, lastDetection: null },
-  rightLateralRaise: { key: 'E', active: false, lastDetection: null },
-  leftLateralRaise: { key: 'Q', active: false, lastDetection: null },
+  squats: { key: 'Space', active: false, lastDetection: null, enabled: true },
+  jumpingJacks: { key: 'W', active: false, lastDetection: null, enabled: true },
+  rightDumbbellRaise: { key: 'D', active: false, lastDetection: null, enabled: true },
+  leftDumbbellRaise: { key: 'A', active: false, lastDetection: null, enabled: true },
+  rightLateralRaise: { key: 'E', active: false, lastDetection: null, enabled: true },
+  leftLateralRaise: { key: 'Q', active: false, lastDetection: null, enabled: true },
 };
 
 let calibrationData = {
@@ -82,13 +82,14 @@ function getPythonLaunchSpec() {
 
 function updateExerciseActivity(active) {
   Object.keys(exerciseState).forEach((name) => {
-    exerciseState[name].active = active;
+    // Disabled exercises stay inactive even when tracking starts
+    exerciseState[name].active = active && exerciseState[name].enabled;
   });
 }
 
 function getActiveExercises() {
   return Object.entries(exerciseState)
-    .filter(([, state]) => state.active)
+    .filter(([, state]) => state.active && state.enabled)
     .map(([exercise]) => exercise);
 }
 
@@ -125,6 +126,8 @@ function resolveBackendRequest(requestId, payload, ok = true) {
 function handleExerciseDetection(event) {
   const state = exerciseState[event.exercise];
   if (!state) return;
+  // Silently drop events for disabled exercises
+  if (!state.enabled) return;
 
   const payload = { ...event, key: state.key };
   state.lastDetection = payload.timestamp || Date.now();
@@ -638,6 +641,20 @@ ipcMain.handle('start-exercise', (_, exerciseName) => {
 ipcMain.handle('stop-exercise', (_, exerciseName) => {
   if (exerciseState[exerciseName]) {
     exerciseState[exerciseName].active = false;
+  }
+  return exerciseState;
+});
+
+ipcMain.handle('toggle-exercise-enabled', (_, { exercise, enabled }) => {
+  if (exerciseState[exercise]) {
+    exerciseState[exercise].enabled = Boolean(enabled);
+    // If disabling while tracking, also deactivate immediately
+    if (!enabled) {
+      exerciseState[exercise].active = false;
+    } else if (isTracking) {
+      // If enabling while tracking, activate immediately
+      exerciseState[exercise].active = true;
+    }
   }
   return exerciseState;
 });

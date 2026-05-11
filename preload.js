@@ -4,6 +4,7 @@ contextBridge.exposeInMainWorld('motionAPI', {
   getExerciseState: () => ipcRenderer.invoke('get-exercise-state'),
   updateKeyMapping: (exercise, key) => ipcRenderer.invoke('update-key-mapping', { exercise, key }),
   toggleTracking: (shouldTrack) => ipcRenderer.invoke('toggle-tracking', shouldTrack),
+  toggleExerciseEnabled: (exercise, enabled) => ipcRenderer.invoke('toggle-exercise-enabled', { exercise, enabled }),
   startExercise: (name) => ipcRenderer.invoke('start-exercise', name),
   stopExercise: (name) => ipcRenderer.invoke('stop-exercise', name),
 

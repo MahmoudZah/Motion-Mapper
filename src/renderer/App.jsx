@@ -49,12 +49,12 @@ export default function App() {
   const [isTracking, setIsTracking] = useState(false);
   const [poseFrame, setPoseFrame] = useState(null);
   const [exerciseState, setExerciseState] = useState({
-    squats: { key: 'Space', active: false, lastDetection: null },
-    jumpingJacks: { key: 'W', active: false, lastDetection: null },
-    rightDumbbellRaise: { key: 'D', active: false, lastDetection: null },
-    leftDumbbellRaise: { key: 'A', active: false, lastDetection: null },
-    rightLateralRaise: { key: 'E', active: false, lastDetection: null },
-    leftLateralRaise: { key: 'Q', active: false, lastDetection: null },
+    squats: { key: 'Space', active: false, lastDetection: null, enabled: true },
+    jumpingJacks: { key: 'W', active: false, lastDetection: null, enabled: true },
+    rightDumbbellRaise: { key: 'D', active: false, lastDetection: null, enabled: true },
+    leftDumbbellRaise: { key: 'A', active: false, lastDetection: null, enabled: true },
+    rightLateralRaise: { key: 'E', active: false, lastDetection: null, enabled: true },
+    leftLateralRaise: { key: 'Q', active: false, lastDetection: null, enabled: true },
   });
   const [calibration, setCalibration] = useState({
     calibrated: false,
@@ -160,6 +160,18 @@ export default function App() {
     }
   }, []);
 
+  const handleToggleExerciseEnabled = useCallback(async (exercise, enabled) => {
+    if (api) {
+      const result = await api.toggleExerciseEnabled(exercise, enabled);
+      setExerciseState(result);
+    } else {
+      setExerciseState((prev) => ({
+        ...prev,
+        [exercise]: { ...prev[exercise], enabled, active: enabled ? prev[exercise].active : false },
+      }));
+    }
+  }, []);
+
   const handleCalibrate = useCallback(async () => {
     if (api) {
       const result = await api.calibrate();
@@ -204,6 +216,7 @@ export default function App() {
                   exerciseState={exerciseState}
                   isTracking={isTracking}
                   onUpdateKey={handleUpdateKey}
+                  onToggleEnabled={handleToggleExerciseEnabled}
                   keypresses={keypresses}
                   detections={detections}
                 />

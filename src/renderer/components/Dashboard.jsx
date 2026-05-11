@@ -11,7 +11,7 @@ const exercises = [
   { id: 'leftLateralRaise', label: 'Left Lateral Raise', defaultKey: 'Q' },
 ];
 
-export default function Dashboard({ exerciseState, isTracking, onUpdateKey, keypresses, detections }) {
+export default function Dashboard({ exerciseState, isTracking, onUpdateKey, onToggleEnabled, keypresses, detections }) {
   return (
     <div className="space-y-6 animate-fade-in">
       <div className="flex items-center gap-3 mb-2">
@@ -31,13 +31,24 @@ export default function Dashboard({ exerciseState, isTracking, onUpdateKey, keyp
                 rounded-xl p-4 transition-all duration-300
                 ${state.active
                   ? 'glow-border bg-surface'
-                  : 'bg-surface border border-panel-border'}
+                  : (state.enabled !== false ? 'bg-surface border border-panel-border' : 'bg-surface/50 border border-panel-border/50 opacity-60')}
               `}
             >
               <div className="flex items-center justify-between">
                 <div className="flex items-center gap-3">
                   <div>
-                    <h3 className="text-sm font-semibold text-white">{ex.label}</h3>
+                    <div className="flex items-center gap-2">
+                      <button
+                        onClick={() => onToggleEnabled && onToggleEnabled(ex.id, state.enabled === false ? true : false)}
+                        className={`w-3 h-3 rounded-full flex-shrink-0 transition-colors ${
+                          state.enabled !== false ? 'bg-red-500 shadow-[0_0_8px_rgba(239,68,68,0.5)]' : 'bg-gray-600'
+                        }`}
+                        title={state.enabled !== false ? 'Disable Exercise' : 'Enable Exercise'}
+                      />
+                      <h3 className={`text-sm font-semibold transition-colors ${state.enabled !== false ? 'text-white' : 'text-gray-500'}`}>
+                        {ex.label}
+                      </h3>
+                    </div>
                     <div className="flex items-center gap-2 mt-1">
                       <span
                         className={`w-2 h-2 rounded-full ${
@@ -47,7 +58,7 @@ export default function Dashboard({ exerciseState, isTracking, onUpdateKey, keyp
                         }`}
                       />
                       <span className={`text-xs ${state.active ? 'text-neon' : 'text-gray-500'}`}>
-                        {state.active ? 'Tracking' : 'Ready'}
+                        {state.active ? 'Tracking' : (state.enabled !== false ? 'Ready' : 'Disabled')}
                       </span>
                     </div>
                   </div>
