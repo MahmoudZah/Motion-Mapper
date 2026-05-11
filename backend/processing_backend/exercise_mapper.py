@@ -112,6 +112,9 @@ JUMP_RESET_HIP_RISE = 0.07
 JUMP_RESET_KNEE_RISE = 0.05
 JUMP_STANDING_KNEE_FLEX_MAX = 20.0
 JUMP_STANDING_TRUNK_MIN = 75.0
+# Brief lockout after a squat to ignore the natural hip/knee overshoot
+# during squat recovery, which otherwise satisfies the jump rise rule.
+SQUAT_RECOVERY_COOLDOWN_MS = 800
 BICEP_CURL_TOP_MAX_ANGLE = 95.0
 BICEP_CURL_RESET_MIN_ANGLE = 145.0
 BICEP_CURL_ELBOW_TUCK_MAX = 0.3
@@ -143,6 +146,9 @@ class ExerciseMapper:
         self._calibrations: dict[str, ExerciseCalibration] = {}
         # Global zone state for the 3-zone alert system
         self._zone = ZoneState()
+        # Timestamp of the last frame where a squat was in progress; used
+        # to suppress jump detection during squat recovery.
+        self._last_squat_active_ms: int = 0
 
     # ------------------------------------------------------------------
     # Calibration API
@@ -348,9 +354,16 @@ class ExerciseMapper:
                 or squat_state.bottom_reached
             )
         )
+        if squat_in_progress:
+            self._last_squat_active_ms = now
+
+        squat_recovery_active = (
+            "squats" in enabled
+            and (now - self._last_squat_active_ms) < SQUAT_RECOVERY_COOLDOWN_MS
+        )
 
         if not squat_in_progress:
-            if "jumpingJacks" in enabled:
+            if "jumpingJacks" in enabled and not squat_recovery_active:
                 signals.append(self._detect_jumping_jack(pose))
             if "rightDumbbellRaise" in enabled:
                 signals.append(self._detect_raise(pose, side="right"))

@@ -1,30 +1,59 @@
-const { app, BrowserWindow, ipcMain, Tray, Menu, nativeImage, screen, session } = require('electron');
-const { spawn } = require('child_process');
-const path = require('path');
-const readline = require('readline');
-const koffi = require('koffi');
+const {
+  app,
+  BrowserWindow,
+  ipcMain,
+  Tray,
+  Menu,
+  nativeImage,
+  screen,
+  session,
+} = require("electron");
+const { spawn } = require("child_process");
+const path = require("path");
+const readline = require("readline");
+const koffi = require("koffi");
 
 // ── System-level keypress via Windows API ──
-const user32 = koffi.load('user32.dll');
-const keybd_event = user32.func('void keybd_event(uint8_t bVk, uint8_t bScan, uint32_t dwFlags, uintptr_t dwExtraInfo)');
+const user32 = koffi.load("user32.dll");
+const keybd_event = user32.func(
+  "void keybd_event(uint8_t bVk, uint8_t bScan, uint32_t dwFlags, uintptr_t dwExtraInfo)",
+);
 
 const VK_MAP = {
-  Space: 0x20, W: 0x57, A: 0x41, S: 0x53, D: 0x44,
-  E: 0x45, Q: 0x51, R: 0x52, F: 0x46,
-  Up: 0x26, Down: 0x28, Left: 0x25, Right: 0x27,
-  Shift: 0x10, Ctrl: 0x11, Enter: 0x0D,
-  '1': 0x31, '2': 0x32, '3': 0x33, '4': 0x34, '5': 0x35,
+  Space: 0x20,
+  W: 0x57,
+  A: 0x41,
+  S: 0x53,
+  D: 0x44,
+  E: 0x45,
+  Q: 0x51,
+  R: 0x52,
+  F: 0x46,
+  Up: 0x26,
+  Down: 0x28,
+  Left: 0x25,
+  Right: 0x27,
+  Shift: 0x10,
+  Ctrl: 0x11,
+  Enter: 0x0d,
+  1: 0x31,
+  2: 0x32,
+  3: 0x33,
+  4: 0x34,
+  5: 0x35,
 };
 
 function simulateKeyPress(keyName) {
   const vk = VK_MAP[keyName];
   if (!vk) return;
-  keybd_event(vk, 0, 0, 0);   // KEYEVENTF_KEYDOWN
-  keybd_event(vk, 0, 2, 0);   // KEYEVENTF_KEYUP
+  keybd_event(vk, 0, 0, 0); // KEYEVENTF_KEYDOWN
+  keybd_event(vk, 0, 2, 0); // KEYEVENTF_KEYUP
 }
 
 function shouldSuppressInjectedInput() {
-  return Boolean(mainWindow && !mainWindow.isDestroyed() && mainWindow.isFocused());
+  return Boolean(
+    mainWindow && !mainWindow.isDestroyed() && mainWindow.isFocused(),
+  );
 }
 
 let mainWindow = null;
@@ -44,26 +73,55 @@ const pendingBackendRequests = new Map();
 
 const BACKEND_START_TIMEOUT_MS = 30000;
 const BACKEND_COMMAND_TIMEOUT_MS = 5000;
-const BACKEND_ROOT = path.join(__dirname, 'backend');
-const BACKEND_ENTRY = path.join(BACKEND_ROOT, 'main.py');
+const BACKEND_ROOT = path.join(__dirname, "backend");
+const BACKEND_ENTRY = path.join(BACKEND_ROOT, "main.py");
+const APP_ICON = path.join(__dirname, "assets", "image.png");
 
 const exerciseState = {
-  squats: { key: 'Space', active: false, lastDetection: null, enabled: true },
-  jumpingJacks: { key: 'W', active: false, lastDetection: null, enabled: true },
-  rightDumbbellRaise: { key: 'D', active: false, lastDetection: null, enabled: true },
-  leftDumbbellRaise: { key: 'A', active: false, lastDetection: null, enabled: true },
-  rightLateralRaise: { key: 'E', active: false, lastDetection: null, enabled: true },
-  leftLateralRaise: { key: 'Q', active: false, lastDetection: null, enabled: true },
+  squats: { key: "Space", active: false, lastDetection: null, enabled: true },
+  jumpingJacks: { key: "W", active: false, lastDetection: null, enabled: true },
+  rightDumbbellRaise: {
+    key: "D",
+    active: false,
+    lastDetection: null,
+    enabled: true,
+  },
+  leftDumbbellRaise: {
+    key: "A",
+    active: false,
+    lastDetection: null,
+    enabled: true,
+  },
+  rightLateralRaise: {
+    key: "E",
+    active: false,
+    lastDetection: null,
+    enabled: true,
+  },
+  leftLateralRaise: {
+    key: "Q",
+    active: false,
+    lastDetection: null,
+    enabled: true,
+  },
 };
 
 let calibrationData = {
   calibrated: false,
   sensitivity: 70,
   neutralPose: null,
-  provider: 'yolo',
+  provider: "yolo",
   availableProviders: [
-    { id: 'yolo', label: 'YOLO Pose', description: 'Fast COCO-style 17-joint pose model.' },
-    { id: 'mediapipe', label: 'MediaPipe Pose', description: 'Google pose landmarker with built-in tracking.' },
+    {
+      id: "yolo",
+      label: "YOLO Pose",
+      description: "Fast COCO-style 17-joint pose model.",
+    },
+    {
+      id: "mediapipe",
+      label: "MediaPipe Pose",
+      description: "Google pose landmarker with built-in tracking.",
+    },
   ],
   model: null,
 };
@@ -73,11 +131,11 @@ function getPythonLaunchSpec() {
     return { command: process.env.MOTION_MAPPER_PYTHON, args: [] };
   }
 
-  if (process.platform === 'win32') {
-    return { command: 'py', args: []};
+  if (process.platform === "win32") {
+    return { command: "py", args: [] };
   }
 
-  return { command: 'python3', args: [] };
+  return { command: "python3", args: [] };
 }
 
 function updateExerciseActivity(active) {
@@ -120,7 +178,7 @@ function resolveBackendRequest(requestId, payload, ok = true) {
   pendingBackendRequests.delete(requestId);
 
   if (ok) pending.resolve(payload);
-  else pending.reject(new Error(payload?.message || 'Backend request failed.'));
+  else pending.reject(new Error(payload?.message || "Backend request failed."));
 }
 
 function handleExerciseDetection(event) {
@@ -133,21 +191,21 @@ function handleExerciseDetection(event) {
   state.lastDetection = payload.timestamp || Date.now();
 
   if (isTracking && state.active) {
-    mainWindow?.webContents.send('exercise-detection', payload);
+    mainWindow?.webContents.send("exercise-detection", payload);
     if (overlayWindow && !overlayWindow.isDestroyed()) {
-      overlayWindow.webContents.send('exercise-detection', payload);
+      overlayWindow.webContents.send("exercise-detection", payload);
     }
     if (alertsWindow && !alertsWindow.isDestroyed()) {
-      alertsWindow.webContents.send('exercise-detection', payload);
+      alertsWindow.webContents.send("exercise-detection", payload);
     }
   }
 
-  if (isTracking && state.active && payload.status === 'valid') {
+  if (isTracking && state.active && payload.status === "valid") {
     if (shouldSuppressInjectedInput()) {
       return;
     }
     simulateKeyPress(state.key);
-    mainWindow?.webContents.send('keypress-injected', {
+    mainWindow?.webContents.send("keypress-injected", {
       exercise: payload.exercise,
       key: state.key,
     });
@@ -156,7 +214,7 @@ function handleExerciseDetection(event) {
 
 function handleBackendEvent(event) {
   switch (event.type) {
-    case 'backend_ready':
+    case "backend_ready":
       backendReady = true;
       calibrationData = {
         ...calibrationData,
@@ -165,18 +223,21 @@ function handleBackendEvent(event) {
       };
       settleBackendStartup();
       return;
-    case 'exercise_detection':
+    case "exercise_detection":
       handleExerciseDetection(event);
       return;
-    case 'pose_frame':
-      mainWindow?.webContents.send('pose-frame', event);
+    case "pose_frame":
+      mainWindow?.webContents.send("pose-frame", event);
       if (overlayWindow && !overlayWindow.isDestroyed()) {
-        overlayWindow.webContents.send('pose-frame', event);
+        overlayWindow.webContents.send("pose-frame", event);
       }
       resolveBackendRequest(event.requestId, event, Boolean(event.ok));
       return;
-    case 'calibration_result':
-      if (event.command === 'calibrate_exercise' || event.command === 'remove_calibration') {
+    case "calibration_result":
+      if (
+        event.command === "calibrate_exercise" ||
+        event.command === "remove_calibration"
+      ) {
         // Per-exercise calibration — resolve with the raw result so the
         // renderer gets { ok, exercise, message, calibrationStatus }.
         resolveBackendRequest(event.requestId, event, Boolean(event.ok));
@@ -188,40 +249,61 @@ function handleBackendEvent(event) {
             ...event.calibration,
           };
         }
-        resolveBackendRequest(event.requestId, calibrationData, Boolean(event.ok));
+        resolveBackendRequest(
+          event.requestId,
+          calibrationData,
+          Boolean(event.ok),
+        );
       }
       return;
-    case 'config_updated':
-      if (typeof event.sensitivity === 'number') {
+    case "config_updated":
+      if (typeof event.sensitivity === "number") {
         calibrationData = {
           ...calibrationData,
           sensitivity: event.sensitivity,
         };
       }
-      resolveBackendRequest(event.requestId, calibrationData, Boolean(event.ok));
+      resolveBackendRequest(
+        event.requestId,
+        calibrationData,
+        Boolean(event.ok),
+      );
       return;
-    case 'command_ack':
+    case "command_ack":
       resolveBackendRequest(event.requestId, event, Boolean(event.ok));
       return;
-    case 'warning':
-      console.warn('[processing-backend]', event.message || event.code || event.type);
+    case "warning":
+      console.warn(
+        "[processing-backend]",
+        event.message || event.code || event.type,
+      );
       return;
-    case 'error':
-      console.error('[processing-backend]', event.message || event.code || event.type);
+    case "error":
+      console.error(
+        "[processing-backend]",
+        event.message || event.code || event.type,
+      );
       if (!backendReady) {
-        settleBackendStartup(new Error(event.message || 'Backend failed to start.'));
+        settleBackendStartup(
+          new Error(event.message || "Backend failed to start."),
+        );
       }
       return;
-    case 'shutdown':
+    case "shutdown":
       return;
     default:
-      console.log('[processing-backend] event:', event);
+      console.log("[processing-backend] event:", event);
   }
 }
 
 function sendBackendCommand(command, timeoutMs = BACKEND_COMMAND_TIMEOUT_MS) {
-  if (!backendProcess || !backendReady || !backendProcess.stdin || backendProcess.stdin.destroyed) {
-    return Promise.reject(new Error('Backend is not ready.'));
+  if (
+    !backendProcess ||
+    !backendReady ||
+    !backendProcess.stdin ||
+    backendProcess.stdin.destroyed
+  ) {
+    return Promise.reject(new Error("Backend is not ready."));
   }
 
   const requestId = `backend-${Date.now()}-${++backendCommandCounter}`;
@@ -230,7 +312,9 @@ function sendBackendCommand(command, timeoutMs = BACKEND_COMMAND_TIMEOUT_MS) {
   return new Promise((resolve, reject) => {
     const timeout = setTimeout(() => {
       pendingBackendRequests.delete(requestId);
-      reject(new Error(`Timed out waiting for backend command '${command.type}'.`));
+      reject(
+        new Error(`Timed out waiting for backend command '${command.type}'.`),
+      );
     }, timeoutMs);
 
     pendingBackendRequests.set(requestId, { resolve, reject, timeout });
@@ -257,9 +341,9 @@ function startBackend() {
   const args = [
     ...python.args,
     BACKEND_ENTRY,
-    '--sensitivity',
+    "--sensitivity",
     String(calibrationData.sensitivity),
-    '--provider',
+    "--provider",
     calibrationData.provider,
   ];
 
@@ -272,7 +356,7 @@ function startBackend() {
       cwd: BACKEND_ROOT,
       env: {
         ...process.env,
-        PYTHONUNBUFFERED: '1',
+        PYTHONUNBUFFERED: "1",
       },
       windowsHide: true,
     });
@@ -280,7 +364,11 @@ function startBackend() {
     backendProcess = child;
 
     const startupTimer = setTimeout(() => {
-      settleBackendStartup(new Error('Timed out waiting for the processing backend to become ready.'));
+      settleBackendStartup(
+        new Error(
+          "Timed out waiting for the processing backend to become ready.",
+        ),
+      );
       if (backendProcess && !backendReady) {
         backendProcess.kill();
       }
@@ -289,35 +377,41 @@ function startBackend() {
     const stdout = readline.createInterface({ input: child.stdout });
     const stderr = readline.createInterface({ input: child.stderr });
 
-    stdout.on('line', (line) => {
+    stdout.on("line", (line) => {
       if (!line.trim()) return;
       try {
         handleBackendEvent(JSON.parse(line));
       } catch (error) {
-        console.error('[processing-backend] failed to parse stdout:', line, error);
+        console.error(
+          "[processing-backend] failed to parse stdout:",
+          line,
+          error,
+        );
       }
     });
 
-    stderr.on('line', (line) => {
+    stderr.on("line", (line) => {
       if (line.trim()) {
-        console.log('[processing-backend]', line);
+        console.log("[processing-backend]", line);
       }
     });
 
-    child.once('error', (error) => {
+    child.once("error", (error) => {
       clearTimeout(startupTimer);
       settleBackendStartup(error);
     });
 
-    child.once('close', (code, signal) => {
+    child.once("close", (code, signal) => {
       clearTimeout(startupTimer);
       const startupError = !backendReady
-        ? new Error(`Processing backend exited before becoming ready (code=${code}, signal=${signal}).`)
+        ? new Error(
+            `Processing backend exited before becoming ready (code=${code}, signal=${signal}).`,
+          )
         : null;
 
       backendProcess = null;
       backendReady = false;
-      clearPendingBackendRequests(new Error('Processing backend stopped.'));
+      clearPendingBackendRequests(new Error("Processing backend stopped."));
 
       if (startupError) {
         settleBackendStartup(startupError);
@@ -328,7 +422,7 @@ function startBackend() {
       if (isTracking && !restartingBackend) {
         isTracking = false;
         updateExerciseActivity(false);
-        mainWindow?.webContents.send('tracking-status', false);
+        mainWindow?.webContents.send("tracking-status", false);
         createTray();
       }
     });
@@ -348,9 +442,12 @@ async function stopBackend() {
   const processRef = backendProcess;
   if (backendReady) {
     try {
-      await sendBackendCommand({ type: 'shutdown' }, 1500);
+      await sendBackendCommand({ type: "shutdown" }, 1500);
     } catch (error) {
-      console.warn('[processing-backend] graceful shutdown failed:', error.message);
+      console.warn(
+        "[processing-backend] graceful shutdown failed:",
+        error.message,
+      );
     }
   }
 
@@ -362,7 +459,8 @@ async function stopBackend() {
 async function restartBackendPreservingState() {
   const shouldResumeTracking = isTracking;
   const shouldResumePreview = previewActive;
-  const shouldRestart = Boolean(backendProcess) || shouldResumeTracking || shouldResumePreview;
+  const shouldRestart =
+    Boolean(backendProcess) || shouldResumeTracking || shouldResumePreview;
   if (!shouldRestart) {
     return;
   }
@@ -376,13 +474,13 @@ async function restartBackendPreservingState() {
     if (shouldResumeTracking) {
       isTracking = true;
       updateExerciseActivity(true);
-      mainWindow?.webContents.send('tracking-status', true);
+      mainWindow?.webContents.send("tracking-status", true);
     }
   } catch (error) {
     if (shouldResumeTracking) {
       isTracking = false;
       updateExerciseActivity(false);
-      mainWindow?.webContents.send('tracking-status', false);
+      mainWindow?.webContents.send("tracking-status", false);
     }
     throw error;
   } finally {
@@ -404,7 +502,7 @@ async function setTrackingState(shouldTrack) {
     }
   }
 
-  mainWindow?.webContents.send('tracking-status', isTracking);
+  mainWindow?.webContents.send("tracking-status", isTracking);
   createTray();
   return { isTracking, exerciseState };
 }
@@ -417,7 +515,10 @@ async function setPreviewState(shouldPreview) {
     await stopBackend();
   }
 
-  return { previewActive, backendReady: backendReady || Boolean(backendProcess) };
+  return {
+    previewActive,
+    backendReady: backendReady || Boolean(backendProcess),
+  };
 }
 
 function createWindow() {
@@ -428,23 +529,23 @@ function createWindow() {
     minHeight: 700,
     frame: false,
     transparent: false,
-    backgroundColor: '#000000',
+    backgroundColor: "#000000",
     webPreferences: {
-      preload: path.join(__dirname, 'preload.js'),
+      preload: path.join(__dirname, "preload.js"),
       contextIsolation: true,
       nodeIntegration: false,
     },
-    icon: path.join(__dirname, 'assets', 'icon.png'),
+    icon: APP_ICON,
   });
 
   const isDev = !app.isPackaged;
   if (isDev) {
-    mainWindow.loadURL('http://localhost:9000');
+    mainWindow.loadURL("http://localhost:9000");
   } else {
-    mainWindow.loadFile(path.join(__dirname, 'dist', 'index.html'));
+    mainWindow.loadFile(path.join(__dirname, "dist", "index.html"));
   }
 
-  mainWindow.on('close', (e) => {
+  mainWindow.on("close", (e) => {
     if (tray) {
       e.preventDefault();
       mainWindow.hide();
@@ -454,17 +555,23 @@ function createWindow() {
 
 // Shared overlay layout constants
 const SHARED_W = 256;
-const EDGE_X = 20;       // px from right edge
-const EDGE_Y = 48;       // px from bottom (above taskbar)
-const STACK_GAP = 6;     // gap between camera and alerts windows
+const EDGE_X = 20; // px from right edge
+const EDGE_Y = 48; // px from bottom (above taskbar)
+const STACK_GAP = 6; // gap between camera and alerts windows
 
 const OVERLAY_H_EXPANDED = 180;
 const OVERLAY_H_COLLAPSED = 30;
 const ALERTS_H = 400;
 
-function overlayX(bounds) { return bounds.x + bounds.width - SHARED_W - EDGE_X; }
-function cameraY(bounds)  { return bounds.y + bounds.height - OVERLAY_H_EXPANDED - EDGE_Y; }
-function alertsY(bounds)  { return cameraY(bounds) - STACK_GAP - ALERTS_H; }
+function overlayX(bounds) {
+  return bounds.x + bounds.width - SHARED_W - EDGE_X;
+}
+function cameraY(bounds) {
+  return bounds.y + bounds.height - OVERLAY_H_EXPANDED - EDGE_Y;
+}
+function alertsY(bounds) {
+  return cameraY(bounds) - STACK_GAP - ALERTS_H;
+}
 
 function createOverlayWindow() {
   if (overlayWindow && !overlayWindow.isDestroyed()) {
@@ -485,7 +592,7 @@ function createOverlayWindow() {
     skipTaskbar: true,
     resizable: false,
     webPreferences: {
-      preload: path.join(__dirname, 'preload.js'),
+      preload: path.join(__dirname, "preload.js"),
       contextIsolation: true,
       nodeIntegration: false,
     },
@@ -493,12 +600,14 @@ function createOverlayWindow() {
 
   const isDev = !app.isPackaged;
   if (isDev) {
-    overlayWindow.loadURL('http://localhost:9000?overlay=1');
+    overlayWindow.loadURL("http://localhost:9000?overlay=1");
   } else {
-    overlayWindow.loadFile(path.join(__dirname, 'dist', 'index.html'), { query: { overlay: '1' } });
+    overlayWindow.loadFile(path.join(__dirname, "dist", "index.html"), {
+      query: { overlay: "1" },
+    });
   }
 
-  overlayWindow.on('closed', () => {
+  overlayWindow.on("closed", () => {
     overlayWindow = null;
   });
 }
@@ -522,7 +631,7 @@ function createAlertsWindow() {
     skipTaskbar: true,
     resizable: false,
     webPreferences: {
-      preload: path.join(__dirname, 'preload.js'),
+      preload: path.join(__dirname, "preload.js"),
       contextIsolation: true,
       nodeIntegration: false,
     },
@@ -530,12 +639,16 @@ function createAlertsWindow() {
 
   const isDev = !app.isPackaged;
   if (isDev) {
-    alertsWindow.loadURL('http://localhost:9000?alerts=1');
+    alertsWindow.loadURL("http://localhost:9000?alerts=1");
   } else {
-    alertsWindow.loadFile(path.join(__dirname, 'dist', 'index.html'), { query: { alerts: '1' } });
+    alertsWindow.loadFile(path.join(__dirname, "dist", "index.html"), {
+      query: { alerts: "1" },
+    });
   }
 
-  alertsWindow.on('closed', () => { alertsWindow = null; });
+  alertsWindow.on("closed", () => {
+    alertsWindow = null;
+  });
 }
 
 function createTray() {
@@ -543,13 +656,13 @@ function createTray() {
     tray.destroy();
   }
 
-  const icon = nativeImage.createEmpty();
+  const icon = nativeImage.createFromPath(APP_ICON);
   tray = new Tray(icon);
-  tray.setToolTip('Gamecha - Virtual Controller');
+  tray.setToolTip("Gamecha - Virtual Controller");
 
   const contextMenu = Menu.buildFromTemplate([
     {
-      label: 'Show Gamecha',
+      label: "Show Gamecha",
       click: () => {
         if (mainWindow) {
           mainWindow.show();
@@ -558,22 +671,25 @@ function createTray() {
       },
     },
     {
-      label: isTracking ? 'Stop Tracking' : 'Start Tracking',
+      label: isTracking ? "Stop Tracking" : "Start Tracking",
       click: async () => {
         try {
           await setTrackingState(!isTracking);
         } catch (error) {
-          console.error('[processing-backend] failed to toggle tracking:', error);
+          console.error(
+            "[processing-backend] failed to toggle tracking:",
+            error,
+          );
           isTracking = false;
           updateExerciseActivity(false);
-          mainWindow?.webContents.send('tracking-status', false);
+          mainWindow?.webContents.send("tracking-status", false);
           createTray();
         }
       },
     },
-    { type: 'separator' },
+    { type: "separator" },
     {
-      label: 'Quit',
+      label: "Quit",
       click: () => {
         tray.destroy();
         tray = null;
@@ -583,7 +699,7 @@ function createTray() {
   ]);
 
   tray.setContextMenu(contextMenu);
-  tray.on('double-click', () => {
+  tray.on("double-click", () => {
     if (mainWindow) {
       mainWindow.show();
       mainWindow.focus();
@@ -594,58 +710,113 @@ function createTray() {
 // ── Mock Data Stream (simulates Python backend) ──
 
 const mockExerciseData = [
-  { exercise: 'squats', status: 'valid', message: 'Squat Detected: Valid', angle: 92 },
-  { exercise: 'squats', status: 'invalid', message: 'Keep your back straight', angle: 65 },
-  { exercise: 'jumpingJacks', status: 'valid', message: 'Jump peak reached', angle: 18 },
-  { exercise: 'rightDumbbellRaise', status: 'valid', message: 'Right curl: angle 82 deg', angle: 82 },
-  { exercise: 'rightDumbbellRaise', status: 'invalid', message: 'Right arm: keep the elbow tucked by your side', angle: 108 },
-  { exercise: 'leftDumbbellRaise', status: 'valid', message: 'Left curl: angle 79 deg', angle: 79 },
-  { exercise: 'leftDumbbellRaise', status: 'invalid', message: 'Left arm: curl higher toward the shoulder', angle: 118 },
-  { exercise: 'rightLateralRaise', status: 'valid', message: 'Right lateral raise: rep counted at 86 deg', angle: 86 },
-  { exercise: 'leftLateralRaise', status: 'invalid', message: 'Left lateral raise: avoid shrugging the shoulder', angle: 82 },
-  { exercise: 'squats', status: 'valid', message: 'Squat Detected: Valid', angle: 95 },
-  { exercise: 'jumpingJacks', status: 'invalid', message: 'Stand tall to reset before the next jump', angle: 42 },
+  {
+    exercise: "squats",
+    status: "valid",
+    message: "Squat Detected: Valid",
+    angle: 92,
+  },
+  {
+    exercise: "squats",
+    status: "invalid",
+    message: "Keep your back straight",
+    angle: 65,
+  },
+  {
+    exercise: "jumpingJacks",
+    status: "valid",
+    message: "Jump peak reached",
+    angle: 18,
+  },
+  {
+    exercise: "rightDumbbellRaise",
+    status: "valid",
+    message: "Right curl: angle 82 deg",
+    angle: 82,
+  },
+  {
+    exercise: "rightDumbbellRaise",
+    status: "invalid",
+    message: "Right arm: keep the elbow tucked by your side",
+    angle: 108,
+  },
+  {
+    exercise: "leftDumbbellRaise",
+    status: "valid",
+    message: "Left curl: angle 79 deg",
+    angle: 79,
+  },
+  {
+    exercise: "leftDumbbellRaise",
+    status: "invalid",
+    message: "Left arm: curl higher toward the shoulder",
+    angle: 118,
+  },
+  {
+    exercise: "rightLateralRaise",
+    status: "valid",
+    message: "Right lateral raise: rep counted at 86 deg",
+    angle: 86,
+  },
+  {
+    exercise: "leftLateralRaise",
+    status: "invalid",
+    message: "Left lateral raise: avoid shrugging the shoulder",
+    angle: 82,
+  },
+  {
+    exercise: "squats",
+    status: "valid",
+    message: "Squat Detected: Valid",
+    angle: 95,
+  },
+  {
+    exercise: "jumpingJacks",
+    status: "invalid",
+    message: "Stand tall to reset before the next jump",
+    angle: 42,
+  },
 ];
 
 // ── IPC Handlers ──
 
-ipcMain.handle('get-exercise-state', () => exerciseState);
+ipcMain.handle("get-exercise-state", () => exerciseState);
 
-ipcMain.handle('update-key-mapping', (_, { exercise, key }) => {
+ipcMain.handle("update-key-mapping", (_, { exercise, key }) => {
   if (exerciseState[exercise]) {
     exerciseState[exercise].key = key;
   }
   return exerciseState;
 });
 
-ipcMain.handle('toggle-tracking', async (_, shouldTrack) => {
+ipcMain.handle("toggle-tracking", async (_, shouldTrack) => {
   try {
     return await setTrackingState(shouldTrack);
   } catch (error) {
-    console.error('[processing-backend] failed to toggle tracking:', error);
+    console.error("[processing-backend] failed to toggle tracking:", error);
     isTracking = false;
     updateExerciseActivity(false);
-    mainWindow?.webContents.send('tracking-status', false);
+    mainWindow?.webContents.send("tracking-status", false);
     createTray();
     return { isTracking, exerciseState };
   }
 });
 
-ipcMain.handle('start-exercise', (_, exerciseName) => {
+ipcMain.handle("start-exercise", (_, exerciseName) => {
   if (exerciseState[exerciseName]) {
     exerciseState[exerciseName].active = true;
   }
   return exerciseState;
 });
 
-ipcMain.handle('stop-exercise', (_, exerciseName) => {
+ipcMain.handle("stop-exercise", (_, exerciseName) => {
   if (exerciseState[exerciseName]) {
     exerciseState[exerciseName].active = false;
   }
   return exerciseState;
 });
 
-ipcMain.handle('toggle-exercise-enabled', (_, { exercise, enabled }) => {
+ipcMain.handle("toggle-exercise-enabled", (_, { exercise, enabled }) => {
   if (exerciseState[exercise]) {
     exerciseState[exercise].enabled = Boolean(enabled);
     // If disabling while tracking, also deactivate immediately
@@ -659,13 +830,13 @@ ipcMain.handle('toggle-exercise-enabled', (_, { exercise, enabled }) => {
   return exerciseState;
 });
 
-ipcMain.handle('calibrate', async () => {
+ipcMain.handle("calibrate", async () => {
   const shouldStopAfter = !backendProcess;
   try {
     await startBackend();
-    calibrationData = await sendBackendCommand({ type: 'calibrate' });
+    calibrationData = await sendBackendCommand({ type: "calibrate" });
   } catch (error) {
-    console.error('[processing-backend] calibration failed:', error);
+    console.error("[processing-backend] calibration failed:", error);
     calibrationData = {
       ...calibrationData,
       calibrated: false,
@@ -678,23 +849,23 @@ ipcMain.handle('calibrate', async () => {
   return calibrationData;
 });
 
-ipcMain.handle('set-sensitivity', async (_, value) => {
+ipcMain.handle("set-sensitivity", async (_, value) => {
   calibrationData.sensitivity = value;
   if (backendProcess && backendReady) {
     try {
       calibrationData = await sendBackendCommand({
-        type: 'set_sensitivity',
+        type: "set_sensitivity",
         sensitivity: value,
       });
     } catch (error) {
-      console.error('[processing-backend] sensitivity update failed:', error);
+      console.error("[processing-backend] sensitivity update failed:", error);
     }
   }
   return calibrationData;
 });
 
-ipcMain.handle('set-provider', async (_, provider) => {
-  if (!['yolo', 'mediapipe'].includes(provider)) {
+ipcMain.handle("set-provider", async (_, provider) => {
+  if (!["yolo", "mediapipe"].includes(provider)) {
     return calibrationData;
   }
 
@@ -708,72 +879,85 @@ ipcMain.handle('set-provider', async (_, provider) => {
   try {
     await restartBackendPreservingState();
   } catch (error) {
-    console.error('[processing-backend] provider update failed:', error);
+    console.error("[processing-backend] provider update failed:", error);
   }
 
   return calibrationData;
 });
 
-ipcMain.handle('calibrate-exercise', async (_, exercise) => {
+ipcMain.handle("calibrate-exercise", async (_, exercise) => {
   if (!backendProcess || !backendReady) {
-    return { ok: false, exercise, message: 'Backend is not running. Start tracking first.' };
+    return {
+      ok: false,
+      exercise,
+      message: "Backend is not running. Start tracking first.",
+    };
   }
   try {
     const result = await sendBackendCommand({
-      type: 'calibrate_exercise',
+      type: "calibrate_exercise",
       exercise,
     });
     return result;
   } catch (error) {
-    console.error('[processing-backend] exercise calibration failed:', error);
+    console.error("[processing-backend] exercise calibration failed:", error);
     return { ok: false, exercise, message: error.message };
   }
 });
 
-ipcMain.handle('remove-calibration', async (_, exercise) => {
+ipcMain.handle("remove-calibration", async (_, exercise) => {
   if (!backendProcess || !backendReady) {
-    return { ok: false, exercise, message: 'Backend is not running.' };
+    return { ok: false, exercise, message: "Backend is not running." };
   }
   try {
     const result = await sendBackendCommand({
-      type: 'remove_calibration',
+      type: "remove_calibration",
       exercise,
     });
     return result;
   } catch (error) {
-    console.error('[processing-backend] remove calibration failed:', error);
+    console.error("[processing-backend] remove calibration failed:", error);
     return { ok: false, exercise, message: error.message };
   }
 });
 
-ipcMain.handle('get-calibration', () => calibrationData);
-ipcMain.handle('process-video-frame', async (_, frame) => {
+ipcMain.handle("get-calibration", () => calibrationData);
+ipcMain.handle("process-video-frame", async (_, frame) => {
   try {
     await startBackend();
-    return await sendBackendCommand({
-      type: 'process_frame',
-      image: frame.image,
-      timestamp: frame.timestamp,
-      activeExercises: isTracking ? getActiveExercises() : [],
-    }, 10000);
+    return await sendBackendCommand(
+      {
+        type: "process_frame",
+        image: frame.image,
+        timestamp: frame.timestamp,
+        activeExercises: isTracking ? getActiveExercises() : [],
+      },
+      10000,
+    );
   } catch (error) {
-    console.error('[processing-backend] frame processing failed:', error);
+    console.error("[processing-backend] frame processing failed:", error);
     return { ok: false, poseDetected: false };
   }
 });
-ipcMain.handle('set-preview-active', async (_, shouldPreview) => {
+ipcMain.handle("set-preview-active", async (_, shouldPreview) => {
   try {
     return await setPreviewState(Boolean(shouldPreview));
   } catch (error) {
-    console.error('[processing-backend] failed to update preview state:', error);
+    console.error(
+      "[processing-backend] failed to update preview state:",
+      error,
+    );
     if (!isTracking) {
       await stopBackend();
     }
-    return { previewActive, backendReady: backendReady || Boolean(backendProcess) };
+    return {
+      previewActive,
+      backendReady: backendReady || Boolean(backendProcess),
+    };
   }
 });
 
-ipcMain.handle('toggle-overlays', () => {
+ipcMain.handle("toggle-overlays", () => {
   const overlayOpen = overlayWindow && !overlayWindow.isDestroyed();
   const alertsOpen = alertsWindow && !alertsWindow.isDestroyed();
   if (overlayOpen || alertsOpen) {
@@ -784,50 +968,54 @@ ipcMain.handle('toggle-overlays', () => {
     createAlertsWindow();
   }
 });
-ipcMain.handle('close-overlays', () => {
+ipcMain.handle("close-overlays", () => {
   overlayWindow?.close();
   alertsWindow?.close();
 });
-ipcMain.handle('overlay-set-collapsed', (_, collapsed) => {
+ipcMain.handle("overlay-set-collapsed", (_, collapsed) => {
   if (overlayWindow && !overlayWindow.isDestroyed()) {
     const h = collapsed ? OVERLAY_H_COLLAPSED : OVERLAY_H_EXPANDED;
     overlayWindow.setSize(SHARED_W, h);
   }
 });
 
-ipcMain.handle('window-minimize', () => mainWindow?.minimize());
-ipcMain.handle('window-maximize', () => {
+ipcMain.handle("window-minimize", () => mainWindow?.minimize());
+ipcMain.handle("window-maximize", () => {
   if (mainWindow?.isMaximized()) mainWindow.unmaximize();
   else mainWindow?.maximize();
 });
-ipcMain.handle('window-close', () => mainWindow?.close());
+ipcMain.handle("window-close", () => mainWindow?.close());
 
 // ── App Lifecycle ──
 
 app.whenReady().then(() => {
   // Grant camera/media permissions to the renderer process
-  session.defaultSession.setPermissionRequestHandler((webContents, permission, callback) => {
-    const allowed = ['media', 'mediaKeySystem'].includes(permission);
-    callback(allowed);
-  });
-  session.defaultSession.setPermissionCheckHandler((webContents, permission) => {
-    return ['media', 'mediaKeySystem'].includes(permission);
-  });
+  session.defaultSession.setPermissionRequestHandler(
+    (webContents, permission, callback) => {
+      const allowed = ["media", "mediaKeySystem"].includes(permission);
+      callback(allowed);
+    },
+  );
+  session.defaultSession.setPermissionCheckHandler(
+    (webContents, permission) => {
+      return ["media", "mediaKeySystem"].includes(permission);
+    },
+  );
 
   createWindow();
   createTray();
 });
 
-app.on('before-quit', () => {
+app.on("before-quit", () => {
   if (backendProcess && backendProcess.exitCode === null) {
     backendProcess.kill();
   }
 });
 
-app.on('window-all-closed', () => {
-  if (process.platform !== 'darwin') app.quit();
+app.on("window-all-closed", () => {
+  if (process.platform !== "darwin") app.quit();
 });
 
-app.on('activate', () => {
+app.on("activate", () => {
   if (BrowserWindow.getAllWindows().length === 0) createWindow();
 });
